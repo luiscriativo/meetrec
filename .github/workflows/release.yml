@@ -19,6 +19,11 @@
 # Linux (x64 e ARM: AppImage, .deb e .rpm), além do .zip da extensão do navegador.
 # Os arquivos seguem o padrão MeetRec-<versão>-<sistema>-<arquitetura>.
 #
+# Atualização automática: cada build gera o seu latest*.yml, e o
+# scripts/merge-update-info.cjs junta os de cada máquina num só por sistema.
+# Ao publicar, os apps instalados veem a versão nova (Windows e AppImage
+# baixam e instalam; Mac sem certificado e .deb/.rpm abrem a página da release).
+#
 # Por que uma máquina por arquitetura: o ffmpeg embutido (ffmpeg-static) é
 # baixado no npm ci para a arquitetura da máquina que faz o build.
 # Windows ARM não tem build próprio: o ffmpeg-static não publica binário para
@@ -168,8 +173,11 @@ jobs:
           name: build-${{ matrix.name }}
           if-no-files-found: error
           retention-days: 7
+          # .blockmap: permite ao Windows baixar só a diferença na atualização
           path: |
             dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest*.yml
             dist/*.dmg
             dist/*.AppImage
             dist/*.deb
@@ -195,11 +203,10 @@ jobs:
         with:
           pattern: build-*
           path: builds
-          merge-multiple: true
-      - name: Juntar os arquivos da release
+      - name: Juntar os builds e os arquivos de atualização
         run: |
-          mkdir -p "$RUNNER_TEMP/release"
-          cp builds/* "$RUNNER_TEMP/release/"
+          npm install --prefix "$RUNNER_TEMP/yaml" --no-save --no-package-lock js-yaml@4
+          NODE_PATH="$RUNNER_TEMP/yaml/node_modules" node scripts/merge-update-info.cjs builds "$RUNNER_TEMP/release"
           # Extensão do navegador (Teams/Meet) como .zip, com a versão do app
           node -e "const f='extension/manifest.json';const m=require('./'+f);m.version=process.env.VERSION;require('fs').writeFileSync(f,JSON.stringify(m,null,2)+'\n')"
           (cd extension && zip -qr "$RUNNER_TEMP/release/MeetRec-$VERSION-browser-extension.zip" .)
@@ -219,6 +226,8 @@ jobs:
             echo "| **Linux** x64 | [AppImage]($R/MeetRec-$V-linux-x86_64.AppImage) · [.deb]($R/MeetRec-$V-linux-amd64.deb) · [.rpm]($R/MeetRec-$V-linux-x86_64.rpm) |"
             echo "| **Linux** ARM | [AppImage]($R/MeetRec-$V-linux-arm64.AppImage) · [.deb]($R/MeetRec-$V-linux-arm64.deb) · [.rpm]($R/MeetRec-$V-linux-aarch64.rpm) |"
             echo "| **Extensão** Chrome / Edge / Brave | [MeetRec-$V-browser-extension.zip]($R/MeetRec-$V-browser-extension.zip) |"
+            echo
+            echo "**Já usa o MeetRec?** O app avisa sozinho sobre esta versão: no Windows (e no AppImage) ela é baixada e instalada pelo próprio app; no Mac e nos pacotes .deb/.rpm o aviso abre esta página."
             echo
             echo "**Requisitos:** [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) instalado e logado (para os resumos) e, para transcrever localmente, Python 3.9+ — o app instala o resto pela tela **Diagnóstico**. Ou use Groq/OpenAI para transcrever na nuvem."
             echo
@@ -240,6 +249,8 @@ jobs:
           git tag "$TAG"
           git push --atomic origin HEAD:main "refs/tags/$TAG"
       - name: Criar a release
+        # Anexa tudo com a release ainda em rascunho: os apps instalados só a
+        # enxergam completa, depois de publicada
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP"/release/* --clobber

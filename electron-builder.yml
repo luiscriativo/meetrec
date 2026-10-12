@@ -32,6 +32,15 @@ extraResources:
   - from: LICENSE
     to: LICENSE.txt
 
+# ── Atualização automática (src/main/updater.js) ─────────────────────────────
+# Gera os latest*.yml que o app instalado lê nas releases do GitHub. O CI usa
+# --publish never: quem publica a release é o workflow (.github/workflows/release.yml).
+publish:
+  provider: github
+  owner: luiscriativo
+  repo: meetrec
+  releaseType: release
+
 # ── macOS: assinatura ad-hoc sem certificado (ver scripts/adhoc-sign.js) ─────
 afterSign: scripts/adhoc-sign.js
 

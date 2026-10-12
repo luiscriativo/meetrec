@@ -69,7 +69,8 @@ const field = (lbl, desc, ctl, cls = '') => `<div class="field ${cls}"><div><div
 
 function general(b) {
   const s = state.settings;
-  b.innerHTML = `<div class="card">
+  b.innerHTML = `<div class="card" id="updCard" style="margin-bottom:14px">${updateField()}</div>
+  <div class="card">
     ${field('Seu nome', 'Como suas falas (microfone) aparecem na transcrição e no resumo.', `<input class="input" data-k="userName" value="${esc(s.userName)}" placeholder="Ex.: Luis">`)}
     ${field('Pasta das gravações', esc(s.storageDir), `<button class="btn" id="pickDir">${ic('folder', 14)} Alterar…</button><button class="btn ghost icon" id="openDir" title="Abrir">${ic('external', 15)}</button>`)}
     ${field('Transcrever e resumir automaticamente', 'Ligado: ao parar, já transcreve e resume em segundo plano (com prioridade baixa, e esperando se outra gravação começar). Desligado: só grava — depois use "Processar pendentes" na lista para fazer tudo de uma vez.', sw('autoProcess', s.autoProcess))}
@@ -79,12 +80,53 @@ function general(b) {
     ${field('Notificações do sistema', 'Avisos de início/fim de gravação, resumo pronto e erros.', sw('notifications', s.notifications))}
     ${field('Sons', 'Sinal sonoro discreto ao iniciar, parar e marcar momentos.', sw('sounds', s.sounds))}
   </div>`;
+  bindUpdate();
   $('#pickDir').onclick = async () => {
     if (state.rec.active) return toast('warn', 'Pare a gravação antes de trocar a pasta das gravações.');
     const d = await api.pickFolder();
     if (d) { await save({ storageDir: d }, 'Pasta alterada. Novas gravações serão salvas lá.'); await ctx.reloadList(); draw(); }
   };
   $('#openDir').onclick = () => api.lib.openFolder();
+}
+
+function updateText(u) {
+  const when = u.checkedAt ? ` · verificado às ${new Date(u.checkedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : '';
+  switch (u.state) {
+    case 'dev': return 'Modo de desenvolvimento: a atualização automática funciona só no app instalado.';
+    case 'checking': return 'Procurando uma versão nova…';
+    case 'not-available': return `Você está na versão mais recente${when}.`;
+    case 'available': return u.manual ? `Versão ${u.version} disponível — baixe pelo site (esta instalação não se atualiza sozinha).` : `Versão ${u.version} disponível para baixar.`;
+    case 'downloading': return `Baixando a versão ${u.version}… ${u.percent || 0}%`;
+    case 'downloaded': return `Versão ${u.version} baixada — instala ao reiniciar ou ao fechar o app.`;
+    case 'error': return u.error || 'Falha ao verificar.';
+    default: return `O MeetRec verifica sozinho a cada 6 horas e avisa quando sair uma versão nova${when}.`;
+  }
+}
+
+function updateField() {
+  const u = state.update || {};
+  const busy = u.state === 'checking' || u.state === 'downloading';
+  const btn = u.state === 'available'
+    ? `<button class="btn primary" id="updAct">${ic(u.manual ? 'external' : 'download', 14)} ${u.manual ? 'Baixar no site' : 'Baixar'}</button>`
+    : u.state === 'downloaded'
+      ? `<button class="btn primary" id="updAct">${ic('refresh', 14)} Reiniciar e instalar</button>`
+      : `<button class="btn" id="updAct" ${busy || u.state === 'dev' ? 'disabled' : ''}>${ic(busy ? 'loader' : 'refresh', 14, busy ? 'spin' : '')} Verificar agora</button>`;
+  return field(`MeetRec v${esc(state.info.version || '')}`, esc(updateText(u)), btn);
+}
+
+function bindUpdate() {
+  const b = $('#updAct');
+  if (!b) return;
+  b.onclick = async () => {
+    const u = state.update || {};
+    if (u.state === 'available') return api.update.download();
+    if (u.state === 'downloaded') {
+      if (state.rec.active) return toast('warn', 'Pare a gravação antes de instalar a atualização.');
+      toast('info', 'Fechando o MeetRec para instalar a atualização…');
+      return api.update.install();
+    }
+    await api.update.check();
+  };
 }
 
 async function audio(b) {
@@ -294,6 +336,10 @@ function shortcuts(b) {
 let bridgeSig = '';
 export function onEvent(type, p) {
   if (!root) return;
+  if (type === 'update' && sec === 'general') {
+    const card = $('#updCard');
+    if (card) { card.innerHTML = updateField(); bindUpdate(); }
+  }
   if (type === 'bridge' && sec === 'integrations') {
     const s = [p.connected, p.inCall, p.platform, p.captionsActive, p.error, p.participants?.length].join('|');
     if (s !== bridgeSig && document.activeElement?.tagName !== 'INPUT') { bridgeSig = s; draw(); }
