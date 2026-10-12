@@ -1,0 +1,71 @@
+// Ponte segura entre as janelas e o processo principal.
+const { contextBridge, ipcRenderer } = require('electron');
+
+const listeners = new Set();
+ipcRenderer.on('evt', (_e, msg) => { for (const fn of listeners) { try { fn(msg.type, msg.payload); } catch (err) { console.error(err); } } });
+
+const inv = (ch) => (...args) => ipcRenderer.invoke(ch, ...args);
+
+contextBridge.exposeInMainWorld('api', {
+  on: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+
+  appInfo: inv('app:info'),
+  getSettings: inv('settings:get'),
+  setSettings: inv('settings:set'),
+  pickFolder: inv('dialog:pickFolder'),
+  pickFile: inv('dialog:pickFile'),
+  open: inv('shell:open'),
+  reveal: inv('shell:reveal'),
+  copy: inv('clipboard:write'),
+  showMain: (route) => ipcRenderer.send('window:show-main', route),
+
+  rec: {
+    start: inv('rec:start'),
+    stop: inv('rec:stop'),
+    pause: inv('rec:pause'),
+    marker: inv('rec:marker'),
+    state: inv('rec:state'),
+    notes: inv('rec:notes'),
+  },
+
+  lib: {
+    list: inv('lib:list'),
+    get: inv('lib:get'),
+    update: inv('lib:update'),
+    saveSummary: inv('lib:saveSummary'),
+    remove: inv('lib:delete'),
+    search: inv('lib:search'),
+    openFolder: inv('lib:openFolder'),
+    exportItem: inv('lib:export'),
+    importFile: inv('lib:import'),
+    mediaUrl: inv('lib:mediaUrl'),
+  },
+
+  pipe: {
+    process: inv('pipe:process'),
+    cancel: inv('pipe:cancel'),
+    status: inv('pipe:status'),
+    ask: inv('pipe:ask'),
+  },
+
+  diag: { run: inv('diag:run'), action: inv('diag:action') },
+  bridgeStatus: inv('bridge:status'),
+  detectorApps: inv('detector:apps'),
+
+  // Usado pela janela de gravação (oculta)
+  recorder: {
+    started: (data) => ipcRenderer.send('rec:started', data),
+    stopped: () => ipcRenderer.send('rec:stopped'),
+    chunk: (track, data) => ipcRenderer.send('rec:chunk', { track, data }),
+    levels: (lv) => ipcRenderer.send('rec:levels', lv),
+    warning: (w) => ipcRenderer.send('rec:warning', w),
+    trackEnded: (track, message) => ipcRenderer.send('rec:track-ended', { track, message }),
+  },
+
+  dev: { capture: inv('dev:capture'), exec: inv('dev:exec') },
+
+  overlay: {
+    action: (a) => ipcRenderer.send('overlay:action', a),
+    resize: (h) => ipcRenderer.send('overlay:resize', h),
+  },
+});

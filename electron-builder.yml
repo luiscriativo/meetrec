@@ -1,0 +1,96 @@
+# electron-builder — https://www.electron.build/configuration/configuration
+# Os instaladores são gerados pelo GitHub Actions (.github/workflows/release.yml),
+# uma máquina por sistema/arquitetura: o ffmpeg embutido é baixado para a
+# arquitetura de quem faz o build.
+
+appId: io.github.luiscriativo.meetrec
+productName: MeetRec
+copyright: Copyright © 2026 luiscriativo
+
+directories:
+  buildResources: assets
+  output: dist
+
+# ── Arquivos do pacote ───────────────────────────────────────────────────────
+asar: true
+files:
+  - src/**/*
+  - assets/**/*
+  - python/**/*
+  - extension/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/__pycache__/**"
+# Executados fora do asar: o ffmpeg, o script do Whisper (rodado pelo Python)
+# e a pasta da extensão (carregada no navegador pelo usuário)
+asarUnpack:
+  - python/**/*
+  - extension/**/*
+  - node_modules/ffmpeg-static/**/*
+
+extraResources:
+  - from: LICENSE
+    to: LICENSE.txt
+
+# ── macOS: assinatura ad-hoc sem certificado (ver scripts/adhoc-sign.js) ─────
+afterSign: scripts/adhoc-sign.js
+
+# Nomes no padrão MeetRec-<versão>-<sistema>-<arquitetura>
+# ── Windows ──────────────────────────────────────────────────────────────────
+win:
+  executableName: MeetRec
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  artifactName: ${productName}-${version}-win-${arch}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: MeetRec
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName}-${version}-win-${arch}-portable.${ext}
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+mac:
+  icon: assets/icon.png
+  category: public.app-category.productivity
+  notarize: false
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  extendInfo:
+    NSMicrophoneUsageDescription: O MeetRec precisa do microfone para gravar sua voz nas reuniões.
+    NSAudioCaptureUsageDescription: O MeetRec captura o áudio do sistema para gravar os outros participantes.
+    NSScreenCaptureUsageDescription: O MeetRec captura o áudio do sistema para gravar os outros participantes.
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+
+dmg:
+  title: MeetRec
+  iconSize: 80
+  window:
+    width: 540
+    height: 380
+
+# ── Linux ────────────────────────────────────────────────────────────────────
+linux:
+  icon: assets/icon.png
+  executableName: meetrec
+  category: Office
+  synopsis: Grave, transcreva e resuma reuniões com o Claude Code
+  maintainer: luiscriativo <luiscriativo@gmail.com>
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  target:
+    - target: AppImage
+    - target: deb
+    - target: rpm
+
+deb:
+  depends: [libnotify4, libxtst6, libnss3, libpulse0]

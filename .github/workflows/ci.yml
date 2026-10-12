@@ -1,0 +1,32 @@
+# Checagem a cada push/pull request: instala as dependências e valida a sintaxe
+# de todo o JavaScript (inclusive os módulos ES do app), do JSON e do Python.
+# Os instaladores são gerados só pelo workflow Release.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Checagem
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check

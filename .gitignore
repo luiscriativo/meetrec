@@ -1,0 +1,60 @@
+# ── Node ─────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Build ────────────────────────────────────────────────────────────────────
+dist/
+out/
+builder-effective-config.yaml
+builder-debug.yml
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── Áudios e dados de teste (gravações reais nunca vão para o repositório) ───
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.16k.wav
+*.whisper.json
+demo-data/
+
+# ── Sistema operacional ──────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Editores ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.suo
+*.sw?
+
+# ── Ambiente e segredos ──────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+
+# ── Logs e cache ─────────────────────────────────────────────────────────────
+logs/
+*.log
+.cache/
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+# Só as skills do projeto são versionadas; configurações locais ficam de fora.
+.claude/*
+!.claude/skills/

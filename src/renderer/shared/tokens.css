@@ -1,0 +1,97 @@
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  --bg: #F6F6F9;
+  --bg-2: #EEEEF4;
+  --surface: #FFFFFF;
+  --surface-2: #F3F3F8;
+  --surface-3: #EAEAF1;
+  --border: #E3E3EC;
+  --border-strong: #D0D0DC;
+  --text: #16161E;
+  --text-2: #4A4A5C;
+  --muted: #7A7A90;
+
+  --accent: #6D4AFF;
+  --accent-2: #8B6DFF;
+  --accent-soft: rgba(109, 74, 255, .10);
+  --rec: #EE2F4A;
+  --rec-soft: rgba(238, 47, 74, .10);
+  --ok: #16A34A;
+  --ok-soft: rgba(22, 163, 74, .10);
+  --warn: #D97706;
+  --warn-soft: rgba(217, 119, 6, .12);
+  --info: #2563EB;
+  --info-soft: rgba(37, 99, 235, .10);
+
+  --grad: linear-gradient(135deg, #7C5CFF 0%, #FF5C7A 100%);
+  --shadow-sm: 0 1px 2px rgba(20, 20, 40, .06);
+  --shadow: 0 6px 24px rgba(20, 20, 40, .08), 0 1px 3px rgba(20, 20, 40, .06);
+  --shadow-lg: 0 20px 60px rgba(20, 20, 40, .18);
+  --r-sm: 8px;
+  --r: 12px;
+  --r-lg: 16px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E0E13;
+    --bg-2: #121219;
+    --surface: #16161E;
+    --surface-2: #1C1C26;
+    --surface-3: #24242F;
+    --border: #262632;
+    --border-strong: #34343F;
+    --text: #EDEDF4;
+    --text-2: #B9B9C9;
+    --muted: #8A8AA0;
+    --accent: #8B6DFF;
+    --accent-2: #A48DFF;
+    --accent-soft: rgba(139, 109, 255, .14);
+    --rec: #FF4560;
+    --rec-soft: rgba(255, 69, 96, .14);
+    --ok: #34D399;
+    --ok-soft: rgba(52, 211, 153, .12);
+    --warn: #FBBF24;
+    --warn-soft: rgba(251, 191, 36, .12);
+    --info: #60A5FA;
+    --info-soft: rgba(96, 165, 250, .12);
+    --shadow: 0 6px 24px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .3);
+    --shadow-lg: 0 24px 70px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0E0E13;
+  --bg-2: #121219;
+  --surface: #16161E;
+  --surface-2: #1C1C26;
+  --surface-3: #24242F;
+  --border: #262632;
+  --border-strong: #34343F;
+  --text: #EDEDF4;
+  --text-2: #B9B9C9;
+  --muted: #8A8AA0;
+  --accent: #8B6DFF;
+  --accent-2: #A48DFF;
+  --accent-soft: rgba(139, 109, 255, .14);
+  --rec: #FF4560;
+  --rec-soft: rgba(255, 69, 96, .14);
+  --ok: #34D399;
+  --ok-soft: rgba(52, 211, 153, .12);
+  --warn: #FBBF24;
+  --warn-soft: rgba(251, 191, 36, .12);
+  --info: #60A5FA;
+  --info-soft: rgba(96, 165, 250, .12);
+  --shadow: 0 6px 24px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .3);
+  --shadow-lg: 0 24px 70px rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+.ic { flex-shrink: 0; display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.9s linear infinite; }
