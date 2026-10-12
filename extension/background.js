@@ -50,4 +50,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 
 chrome.alarms.create('ping', { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => call('/ping', {}));
-chrome.runtime.onInstalled.addListener(() => { call('/ping', {}); chrome.action.openPopup?.().catch(() => {}); });
+chrome.runtime.onInstalled.addListener(() => {
+  call('/ping', {});
+  // Abre o popup para o pareamento (alguns navegadores não permitem sem um clique do usuário)
+  try { chrome.action.openPopup?.()?.catch(() => {}); } catch { /* ignora */ }
+});

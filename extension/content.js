@@ -7,6 +7,9 @@
   const host = location.hostname;
   const PLATFORM = host.includes('meet.google') ? 'Google Meet' : 'Teams (navegador)';
   const isTeams = PLATFORM.startsWith('Teams');
+  // Identifica este frame: o Teams roda a chamada dentro de um iframe, e o app
+  // junta o estado de todos os frames da aba para não alternar "em chamada"/"fora"
+  const FRAME_ID = Math.random().toString(36).slice(2, 10);
 
   let queue = [];
   let inCall = false;
@@ -167,7 +170,7 @@
       const events = queue; queue = [];
       lastSend = now;
       try {
-        chrome.runtime.sendMessage({ type: 'events', tab: { platform: PLATFORM, inCall, title: inCall ? meetingTitle() : null, url: location.origin }, events });
+        chrome.runtime.sendMessage({ type: 'events', tab: { frame: FRAME_ID, platform: PLATFORM, inCall, title: inCall ? meetingTitle() : null, url: location.origin }, events });
       } catch { /* extensão recarregada: ignora */ }
     }
   }

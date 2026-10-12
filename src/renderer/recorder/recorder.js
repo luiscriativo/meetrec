@@ -4,6 +4,7 @@
 // `api` é exposto globalmente pelo preload (contextBridge)
 
 let S = null; // sessão atual
+let pending = null; // início em andamento (pode ser cancelado antes de terminar)
 
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
 
@@ -105,7 +106,16 @@ async function onMicLost() {
 }
 
 async function start(opts) {
-  if (S) return api.recorder.started({ ok: false, error: 'Já existe uma gravação ativa.' });
+  const seq = opts.seq;
+  const reply = (data) => api.recorder.started({ seq, ...data });
+  if (S || pending) return reply({ ok: false, error: 'Já existe uma gravação ativa.' });
+  pending = { seq, cancelled: false };
+  try { await startInner(opts, reply); } finally { pending = null; }
+}
+
+const stopStreams = (...streams) => streams.forEach((st) => st?.getTracks().forEach((t) => t.stop()));
+
+async function startInner(opts, reply) {
   const warnings = [];
   let mic = null, sys = null;
 
@@ -123,12 +133,17 @@ async function start(opts) {
   }
 
   if (!mic && !sys) {
-    return api.recorder.started({ ok: false, error: warnings.join(' ') || 'Nenhuma fonte de áudio disponível.' });
+    return reply({ ok: false, error: warnings.join(' ') || 'Nenhuma fonte de áudio disponível.' });
+  }
+  // Mandaram parar enquanto os dispositivos abriam: solta tudo e não grava nada
+  if (pending.cancelled) {
+    stopStreams(mic, sys);
+    return reply({ ok: false, error: 'Gravação cancelada antes de começar.' });
   }
 
   const ctx = new AudioContext({ sampleRate: 48000 });
   if (ctx.state === 'suspended') await ctx.resume();
-  S = { opts, ctx, recorders: {}, stopping: false, paused: false };
+  S = { opts, seq: opts.seq, ctx, recorders: {}, stopping: false, paused: false };
 
   const mixDest = ctx.createMediaStreamDestination();
   const micGain = ctx.createGain(), sysGain = ctx.createGain();
@@ -156,12 +171,17 @@ async function start(opts) {
     Object.values(S.recorders).forEach((r) => r.start(1000));
   } catch (e) {
     cleanup();
-    return api.recorder.started({ ok: false, error: `Falha ao iniciar o gravador: ${e.message}` });
+    return reply({ ok: false, error: `Falha ao iniciar o gravador: ${e.message}` });
   }
 
+  if (pending.cancelled) { // parada pedida durante a preparação do áudio
+    Object.values(S.recorders).forEach((r) => { try { r.stop(); } catch {} });
+    cleanup();
+    return reply({ ok: false, error: 'Gravação cancelada antes de começar.' });
+  }
   beep('start');
   startMeters();
-  api.recorder.started({ ok: true, tracks, warnings });
+  reply({ ok: true, tracks, warnings });
 }
 
 function startMeters() {
@@ -199,20 +219,23 @@ function cleanup() {
   S = null;
 }
 
-async function stop() {
-  if (!S) return api.recorder.stopped();
+async function stop(seq) {
+  if (!S) {
+    if (pending) pending.cancelled = true;
+    return api.recorder.stopped(seq);
+  }
   S.stopping = true;
   const recs = Object.values(S.recorders);
   for (const r of recs) { try { if (r.state !== 'inactive') r.stop(); } catch {} }
   await Promise.race([Promise.all(recs.map((r) => r.done)), new Promise((r) => setTimeout(r, 8000))]);
   beep('stop');
   cleanup();
-  api.recorder.stopped();
+  api.recorder.stopped(seq);
 }
 
 api.on((type, payload) => {
-  if (type === 'recorder-start') start(payload).catch((e) => api.recorder.started({ ok: false, error: e.message }));
-  else if (type === 'recorder-stop') stop();
+  if (type === 'recorder-start') start(payload).catch((e) => api.recorder.started({ seq: payload.seq, ok: false, error: e.message }));
+  else if (type === 'recorder-stop') stop(payload?.seq);
   else if (type === 'recorder-pause' && S) { S.paused = true; Object.values(S.recorders).forEach((r) => r.state === 'recording' && r.pause()); }
   else if (type === 'recorder-resume' && S) { S.paused = false; Object.values(S.recorders).forEach((r) => r.state === 'paused' && r.resume()); }
   else if (type === 'play-sound') beep(payload);

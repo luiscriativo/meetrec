@@ -92,15 +92,15 @@ async function renderLive() {
         <div class="grow" style="margin-left:6px">
           <input class="live-title" id="liveTitle" value="${esc(meta?.title || 'Reunião')}" title="Clique para renomear">
           <div class="muted" style="font-size:12.5px;display:flex;gap:10px;flex-wrap:wrap;margin-top:2px">
-            <span>${r.stopping ? 'Salvando…' : r.paused ? 'Pausado' : 'Gravando'} desde ${started}</span>
+            <span>${r.starting ? 'Iniciando — conectando ao microfone e ao som do PC…' : `${r.stopping ? 'Salvando…' : r.paused ? 'Pausado' : 'Gravando'} desde ${started}`}</span>
             ${meta?.platform ? `<span>· ${esc(meta.platform)}</span>` : ''}
             <span class="chip ${r.tracks?.mic ? 'accent' : 'err'}" style="height:20px">${ic(r.tracks?.mic ? 'mic' : 'micOff', 12)} ${r.tracks?.mic ? 'Microfone' : 'Sem microfone'}</span>
             <span class="chip ${r.tracks?.system ? 'ok' : 'err'}" style="height:20px">${ic('speaker', 12)} ${r.tracks?.system ? 'Som do PC' : 'Sem som do PC'}</span>
           </div>
         </div>
         <div class="live-actions">
-          <button class="btn" id="lvMarker" title="Marcar momento importante (${esc(prettyShortcut(state.settings.shortcutMarker))})">${ic('flag', 15)} Marcar</button>
-          <button class="btn" id="lvPause">${ic(r.paused ? 'play' : 'pause', 15)} ${r.paused ? 'Retomar' : 'Pausar'}</button>
+          <button class="btn" id="lvMarker" ${r.starting ? 'disabled' : ''} title="Marcar momento importante (${esc(prettyShortcut(state.settings.shortcutMarker))})">${ic('flag', 15)} Marcar</button>
+          <button class="btn" id="lvPause" ${r.starting ? 'disabled' : ''}>${ic(r.paused ? 'play' : 'pause', 15)} ${r.paused ? 'Retomar' : 'Pausar'}</button>
           <button class="btn rec" id="lvStop" ${r.stopping ? 'disabled' : ''}>${ic('stop', 14)} Parar e resumir</button>
         </div>
       </div>

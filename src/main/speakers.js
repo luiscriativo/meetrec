@@ -4,12 +4,15 @@ function tokens(s) {
   return new Set(s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length > 2));
 }
 
-function similarity(a, b) {
+// É eco quando o trecho do microfone repete o do sistema: precisa de várias palavras em comum,
+// para que uma fala curta sua ("sim, concordo") não seja confundida com eco de outra pessoa.
+function isEcho(a, b) {
   const A = tokens(a), B = tokens(b);
-  if (!A.size || !B.size) return 0;
+  if (!A.size || !B.size) return false;
   let inter = 0;
   for (const w of A) if (B.has(w)) inter++;
-  return inter / Math.min(A.size, B.size);
+  if (inter / Math.max(A.size, B.size) >= 0.5) return true;
+  return inter >= 4 && inter / Math.min(A.size, B.size) >= 0.75;
 }
 
 // Segmentos do microfone que repetem o que veio do sistema (eco de alto-falante) são descartados.
@@ -18,7 +21,7 @@ function removeEcho(mic, sys) {
   const kept = mic.filter((m) => {
     for (const s of sys) {
       if (s.end < m.start - 1.5 || s.start > m.end + 1.5) continue;
-      if (similarity(m.text, s.text) >= 0.6) { removed++; return false; }
+      if (isEcho(m.text, s.text)) { removed++; return false; }
     }
     return true;
   });

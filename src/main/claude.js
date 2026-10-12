@@ -53,7 +53,10 @@ async function runClaude({ prompt, settings, cwd, onText, onStatus, onChild, tim
     });
     onChild?.(child);
     let text = '', stderr = '', buf = '', result = null, model = null, thinkingNotified = false, writing = false;
-    const timer = setTimeout(() => { try { child.kill(); } catch {} }, timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; try { child.kill(); } catch {} }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
 
     child.stdout.on('data', (d) => {
       buf += d;
@@ -100,6 +103,7 @@ async function runClaude({ prompt, settings, cwd, onText, onStatus, onChild, tim
         const final = (result.result || text || '').trim();
         return resolve({ text: final, costUsd: result.total_cost_usd, durationMs: result.duration_ms, model });
       }
+      if (timedOut) return reject(new UserError(`O Claude não respondeu em ${Math.round(timeoutMs / 60000)} min (tempo esgotado). Tente novamente.`, 'timeout'));
       if (code === null) return reject(new UserError('Geração cancelada.', 'cancelled'));
       const raw = (result && (result.result || result.error)) || stderr || text || `código de saída ${code}`;
       reject(new UserError(friendlyError(raw) || `O Claude Code falhou: ${String(raw).slice(0, 400)}`, 'claude-failed'));
