@@ -12,6 +12,7 @@ const { Library } = require('./library');
 const { Pipeline } = require('./pipeline');
 const { Bridge } = require('./bridge');
 const { MeetingDetector } = require('./detector');
+const { Updater } = require('./updater');
 const { runChecks, installWhisper, downloadModel } = require('./diagnostics');
 const { runClaude } = require('./claude');
 const { ffmpegPath, run, resourcePath } = require('./tools');
@@ -34,7 +35,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'meetrec-media', privileges: { stream: true, supportFetchAPI: true, bypassCSP: true, standard: true } }]);
 
-let store, library, pipeline, bridge, detector, tray;
+let store, library, pipeline, bridge, detector, updater, tray;
 let mainWin = null, overlayWin = null, recorderWin = null;
 let quitting = false;
 let hiddenHintShown = false;
@@ -213,7 +214,16 @@ function updateTray() {
   }
   tray.setToolTip(`MeetRec — ${status}`);
   const recent = library.list().slice(0, 5);
+  const up = updater?.status || {};
+  const updateItems = up.state === 'downloaded'
+    ? [{ label: `↻ Reiniciar e instalar a versão ${up.version}`, click: () => installUpdate() }, { type: 'separator' }]
+    : up.state === 'available'
+      ? [{ label: up.manual ? `⬇ Nova versão ${up.version} — baixar no site` : `⬇ Baixar a versão ${up.version}`, click: () => { updater.download(); if (!up.manual) showMain(); } }, { type: 'separator' }]
+      : up.state === 'downloading'
+        ? [{ label: `Baixando atualização… ${up.percent || 0}%`, enabled: false }, { type: 'separator' }]
+        : [];
   const menu = Menu.buildFromTemplate([
+    ...updateItems,
     { label: status, enabled: false },
     { type: 'separator' },
     rec.active
@@ -401,6 +411,18 @@ function addMarker(label) {
   recorderWin?.webContents.send('evt', { type: 'play-sound', payload: 'marker' });
   send('marker-added', { id: rec.id, t, label });
   toast('success', `Momento marcado em ${fmtTime(t)}.`);
+}
+
+// ───────────────────────── Atualização ─────────────────────────
+function installUpdate() {
+  if (rec.active) {
+    toast('warn', 'Há uma gravação em andamento. Pare a gravação para instalar a atualização.');
+    showMain();
+    return { ok: false, error: 'recording' };
+  }
+  quitting = true; // libera o before-quit; o instalador reabre o app no fim
+  if (!updater.install()) { quitting = false; return { ok: false, error: 'not-ready' }; }
+  return { ok: true };
 }
 
 // ───────────────────────── Atalhos ─────────────────────────
@@ -671,6 +693,12 @@ function setupIpc() {
 
   ipcMain.handle('bridge:status', () => bridge.status());
 
+  // Atualização
+  ipcMain.handle('update:status', () => updater.status);
+  ipcMain.handle('update:check', () => updater.check(true));
+  ipcMain.handle('update:download', () => updater.download());
+  ipcMain.handle('update:install', () => installUpdate());
+
   // Somente desenvolvimento: captura de tela das janelas (apenas fora do instalador)
   if (!app.isPackaged) {
     ipcMain.handle('dev:capture', async (_e, which, file) => {
@@ -681,6 +709,7 @@ function setupIpc() {
       return file;
     });
     ipcMain.handle('dev:exec', (_e, code) => mainWin.webContents.executeJavaScript(code));
+    ipcMain.handle('dev:emit', (_e, type, payload) => send(type, payload));
   }
   ipcMain.handle('detector:apps', () => detector.apps);
 }
@@ -742,6 +771,7 @@ app.whenReady().then(async () => {
   pipeline = new Pipeline(library, store);
   bridge = new Bridge(store, app.getVersion());
   detector = new MeetingDetector();
+  updater = new Updater();
   bridge.getRecording = () => rec.active;
   pipeline.isRecording = () => rec.active;
 
@@ -809,6 +839,17 @@ app.whenReady().then(async () => {
     else if (action === 'toggle') (rec.active ? stopRecording() : startRecording());
   });
   detector.on('change', onMeetingAppsChange);
+  updater.on('status', (st) => { send('update', st); updateTrayThrottled(); });
+  updater.on('available', (st) => notify(`Nova versão do MeetRec: ${st.version}`,
+    st.manual ? 'Clique para ver e baixar a nova versão.' : 'Clique para baixar e instalar — leva só um instante.',
+    () => showMain()));
+  updater.on('downloaded', (st) => {
+    notify('Atualização pronta para instalar', `A versão ${st.version} será instalada ao reiniciar o MeetRec (ou quando você fechar o app).`, () => showMain());
+    updateTray();
+  });
+  updater.on('up-to-date', (st) => toast('success', `Você está na versão mais recente (v${st.current}).`));
+  updater.on('failed', (st) => toast('error', st.error, { duration: 9000 }));
+  updater.start();
   store.on('change', (c) => {
     send('settings', store.get());
     if (c.shortcutToggle !== undefined || c.shortcutMarker !== undefined) { const f = registerShortcuts(); if (!f.length) toast('success', 'Atalhos atualizados.'); }

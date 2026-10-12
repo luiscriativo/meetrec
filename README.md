@@ -92,6 +92,7 @@ Escreva notas e marque momentos enquanto grava. O Claude leva os dois em conta n
 - Modo **"só gravar"**: grave o dia todo e use **Processar pendentes** quando o PC estiver livre.
 - O processamento **nunca compete com uma gravação**: a fila espera, e o Whisper roda com prioridade baixa.
 - **Diagnóstico** que verifica tudo e instala o que falta com um clique.
+- **Atualização automática**: quando sai uma versão nova, o app avisa. No Windows ele baixa e instala sozinho (veja [Atualizações](#-atualizações)).
 - Tema claro e escuro, notificações do sistema e sons discretos.
 
 ---
@@ -149,6 +150,21 @@ O FFmpeg já vem embutido no app.
 Ao abrir, o MeetRec mostra uma tela de boas-vindas com a verificação de tudo. A tela **Diagnóstico** aponta e corrige o que faltar.
 
 ![Diagnóstico](docs/screenshots/diagnostics.png)
+
+---
+
+## 🔄 Atualizações
+
+O MeetRec procura versões novas nas [releases do GitHub](https://github.com/luiscriativo/meetrec/releases) ao abrir e a cada 6 horas. Quando encontra, mostra um aviso no topo do app e na bandeja.
+
+| Instalação | Como atualiza |
+|---|---|
+| **Windows** (instalador) | **Baixar atualização** baixa no próprio app, com progresso e velocidade. Depois é só **Reiniciar e instalar**, ou ela é instalada quando você fechar o app. Só a diferença é baixada (blockmap). |
+| **Linux** AppImage | Igual ao Windows: baixa e instala pelo app. |
+| **macOS** | O aviso abre a página da nova versão para baixar o `.dmg`. Sem certificado da Apple, o macOS não deixa o app se substituir sozinho. |
+| **Windows portátil**, Linux `.deb` / `.rpm` | O aviso abre a página da nova versão. |
+
+O app **nunca reinicia durante uma gravação**: o botão de instalar pede para parar antes, e avisa se houver uma transcrição em andamento. Você também pode verificar manualmente em **Configurações → Geral → Verificar agora**, ou clicando na versão no canto da barra lateral.
 
 ---
 
@@ -293,6 +309,7 @@ src/
 │  ├─ bridge.js          servidor local (127.0.0.1) da extensão
 │  ├─ detector.js        detecta apps de reunião usando o microfone
 │  ├─ diagnostics.js     verificações e instalação do motor local
+│  ├─ updater.js         atualização automática pelas releases do GitHub
 │  ├─ library.js         biblioteca de reuniões (pastas + meta.json)
 │  └─ store.js           configurações (chaves criptografadas)
 ├─ preload/              ponte segura (contextIsolation)
@@ -320,7 +337,7 @@ As versões são geradas pelo GitHub Actions ([`.github/workflows/release.yml`](
    | `major` | 1.0.0 → 2.0.0 | mudança grande |
    | `teste` | — | só gera os builds, sem versão nem release |
 
-3. O workflow checa o código e gera os instaladores numa máquina por sistema/arquitetura. Só se **tudo** passar, ele grava a versão no `package.json` (commit `Versão X.Y.Z`), cria a tag e publica a release com a tabela de downloads, o `.zip` da extensão e o `SHA256SUMS.txt`.
+3. O workflow checa o código e gera os instaladores numa máquina por sistema/arquitetura. Só se **tudo** passar, ele grava a versão no `package.json` (commit `Versão X.Y.Z`), cria a tag e publica a release com a tabela de downloads, o `.zip` da extensão, os `latest*.yml` da atualização automática (juntados por `scripts/merge-update-info.cjs`) e o `SHA256SUMS.txt`. Assim que a release é publicada, os apps instalados recebem o aviso.
 4. Desmarque **Publicar** para deixar a release como rascunho e revisar antes.
 
 Também funciona com uma tag enviada à mão, com a versão já atualizada no `package.json`: `git tag v1.0.0 && git push origin v1.0.0` cria um rascunho.

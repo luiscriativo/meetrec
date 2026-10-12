@@ -11,6 +11,7 @@ export const state = {
   summaryStream: {},  // id -> texto parcial do resumo
   recWarnings: [],
   health: null,       // resultado do diagnóstico
+  update: { state: 'idle' }, // status da atualização automática
   route: { view: 'home' },
 };
 

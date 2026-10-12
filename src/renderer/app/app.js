@@ -1,6 +1,6 @@
 // Shell da aplicação: navegação, barra lateral, eventos globais.
 import { state, ctx, api } from './ctx.js';
-import { $, ic, esc, toast, modal, fmtTime, prettyShortcut, debounce } from './util.js';
+import { $, ic, esc, toast, modal, fmtTime, prettyShortcut, debounce, confirmDialog } from './util.js';
 import * as Home from './views/home.js';
 import * as Meeting from './views/meeting.js';
 import * as Settings from './views/settings.js';
@@ -105,6 +105,79 @@ $('#sideStatus').addEventListener('click', (e) => {
   navigate({ view: b.dataset.go, id: b.dataset.id, tab: b.dataset.tab });
 });
 
+// ───────── Atualização (banner no topo, no modelo do Tecius) ─────────
+let updateDismissed = null; // versão cujo aviso foi fechado nesta sessão
+
+function fmtSpeed(bps) {
+  if (!bps) return '';
+  return bps > 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.round(bps / 1e3)} KB/s`;
+}
+
+function renderUpdate() {
+  const u = state.update || {};
+  const box = $('#updateBanner');
+  const hasUpdate = ['available', 'downloading', 'downloaded'].includes(u.state);
+  $('#ver').innerHTML = `${hasUpdate ? '<span class="upd-dot"></span>' : ''}v${esc(state.info.version || '')}`;
+  $('#ver').title = hasUpdate ? `Nova versão ${u.version} disponível` : 'Versão do app — clique para verificar atualizações';
+  const show = (hasUpdate || (u.state === 'error' && u.userFacing)) && updateDismissed !== `${u.state}:${u.version}`;
+  if (!show) { box.innerHTML = ''; return; }
+  const notes = u.version ? `<a data-act="notes">Ver novidades</a>` : '';
+  let cls = '', icn = 'download', title = '', sub = '', actions = '', bar = '';
+  if (u.state === 'available') {
+    title = `Nova versão disponível: v${esc(u.version)}`;
+    sub = u.manual
+      ? `${state.info.platform === 'darwin' ? 'No Mac, a atualização é feita baixando o novo .dmg.' : 'Esta instalação não se atualiza sozinha — baixe o novo instalador.'} · ${notes}`
+      : `Você está na v${esc(u.current)}. O download é feito aqui mesmo e não interrompe nada. · ${notes}`;
+    actions = `<button class="btn primary sm" data-act="download">${ic(u.manual ? 'external' : 'download', 13)} ${u.manual ? 'Baixar no site' : 'Baixar atualização'}</button>`;
+  } else if (u.state === 'downloading') {
+    icn = 'loader';
+    title = `Baixando a versão ${esc(u.version)}… ${u.percent || 0}%`;
+    sub = [u.total ? `${(u.transferred / 1e6).toFixed(1)} de ${(u.total / 1e6).toFixed(1)} MB` : '', fmtSpeed(u.bytesPerSecond)].filter(Boolean).join(' · ') || 'Iniciando o download…';
+    bar = `<div class="bar"><i style="width:${u.percent || 0}%"></i></div>`;
+  } else if (u.state === 'downloaded') {
+    cls = 'ready'; icn = 'checkCircle';
+    title = `Versão ${esc(u.version)} pronta para instalar`;
+    sub = `Reinicie agora ou ela será instalada quando você fechar o MeetRec. · ${notes}`;
+    actions = `<button class="btn primary sm" data-act="install">${ic('refresh', 13)} Reiniciar e instalar</button>`;
+  } else if (u.state === 'error') {
+    cls = 'err'; icn = 'alertCircle';
+    title = 'Não foi possível atualizar';
+    sub = esc(u.error || '');
+    actions = `<button class="btn sm" data-act="retry">${ic('refresh', 13)} Tentar de novo</button>`;
+  }
+  box.innerHTML = `<div class="update-banner ${cls}">${bar}<div class="in">
+    <span class="ico">${ic(icn, 16, icn === 'loader' ? 'spin' : '')}</span>
+    <div class="grow"><div class="t">${title}</div><div class="s">${sub}</div></div>
+    ${actions}
+    ${u.state !== 'downloading' ? `<button class="btn icon sm ghost" data-act="dismiss" title="Fechar">${ic('x', 14)}</button>` : ''}
+  </div></div>`;
+}
+
+$('#updateBanner').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const u = state.update;
+  const act = b.dataset.act;
+  if (act === 'dismiss') { updateDismissed = `${u.state}:${u.version}`; renderUpdate(); }
+  else if (act === 'notes') api.open(u.notesUrl || `https://github.com/luiscriativo/meetrec/releases/tag/v${u.version}`);
+  else if (act === 'download') {
+    await api.update.download();
+    if (u.manual) { updateDismissed = `${u.state}:${u.version}`; renderUpdate(); toast('info', 'Abri a página da nova versão no navegador.'); }
+  } else if (act === 'retry') {
+    state.update = { ...u, userFacing: false };
+    if (u.version) await api.update.download(); else await api.update.check();
+  } else if (act === 'install') {
+    if (state.rec.active) return toast('warn', 'Pare a gravação antes de instalar a atualização.');
+    const busy = state.list.some((m) => m.status === 'processing');
+    if (busy && !(await confirmDialog('Instalar agora?', 'Uma reunião está sendo transcrita/resumida. Ao reiniciar, o processamento é interrompido e você pode refazê-lo depois.', 'Reiniciar e instalar'))) return;
+    toast('info', 'Fechando o MeetRec para instalar a atualização…');
+    const r = await api.update.install();
+    if (!r?.ok && r?.error !== 'recording') toast('error', 'A atualização ainda não está pronta para instalar.');
+  }
+});
+
+$('#ver').addEventListener('click', () => navigate({ view: 'settings', tab: 'general' }));
+
 ctx.navigate = navigate;
 ctx.refreshSidebar = () => { renderNav(); renderSideStatus(); renderRecCta(); };
 ctx.reloadList = async () => { state.list = await api.lib.list(); renderNav(); renderSideStatus(); };
@@ -145,6 +218,11 @@ api.on((type, p) => {
     case 'bridge': state.bridge = p; renderSideStatus(); break;
     case 'detector': state.detectorApps = p.apps; renderSideStatus(); break;
     case 'settings': state.settings = p; applyTheme(); renderRecCta(); renderSideStatus(); break;
+    case 'update':
+      // Erros só viram banner quando o usuário pediu a ação (os da checagem automática são silenciosos)
+      state.update = { ...p, userFacing: p.state === 'error' ? true : undefined };
+      renderUpdate();
+      break;
   }
   current?.onEvent?.(type, p);
 });
@@ -183,14 +261,14 @@ function onboarding() {
 
 // ───────── Inicialização ─────────
 (async () => {
-  const [settings, info, list, rec, bridge, apps, pipe] = await Promise.all([
-    api.getSettings(), api.appInfo(), api.lib.list(), api.rec.state(), api.bridgeStatus(), api.detectorApps(), api.pipe.status(),
+  const [settings, info, list, rec, bridge, apps, pipe, update] = await Promise.all([
+    api.getSettings(), api.appInfo(), api.lib.list(), api.rec.state(), api.bridgeStatus(), api.detectorApps(), api.pipe.status(), api.update.status(),
   ]);
-  Object.assign(state, { settings, info, list, rec, bridge, detectorApps: apps });
+  Object.assign(state, { settings, info, list, rec, bridge, detectorApps: apps, update });
   if (pipe.current) state.progress[pipe.current.id] = {};
   document.documentElement.classList.add(`platform-${info.platform}`);
   $('#logo').innerHTML = ic('waves', 15);
-  $('#ver').textContent = 'v' + info.version;
+  renderUpdate();
   applyTheme();
   renderRecCta();
   renderSideStatus();

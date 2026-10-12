@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   diag: { run: inv('diag:run'), action: inv('diag:action') },
+  update: { status: inv('update:status'), check: inv('update:check'), download: inv('update:download'), install: inv('update:install') },
   bridgeStatus: inv('bridge:status'),
   detectorApps: inv('detector:apps'),
 
@@ -63,7 +64,7 @@ contextBridge.exposeInMainWorld('api', {
     trackEnded: (track, message) => ipcRenderer.send('rec:track-ended', { track, message }),
   },
 
-  dev: { capture: inv('dev:capture'), exec: inv('dev:exec') },
+  dev: { capture: inv('dev:capture'), exec: inv('dev:exec'), emit: inv('dev:emit') },
 
   overlay: {
     action: (a) => ipcRenderer.send('overlay:action', a),
