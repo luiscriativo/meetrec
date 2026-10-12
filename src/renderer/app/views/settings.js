@@ -80,6 +80,7 @@ function general(b) {
     ${field('Sons', 'Sinal sonoro discreto ao iniciar, parar e marcar momentos.', sw('sounds', s.sounds))}
   </div>`;
   $('#pickDir').onclick = async () => {
+    if (state.rec.active) return toast('warn', 'Pare a gravação antes de trocar a pasta das gravações.');
     const d = await api.pickFolder();
     if (d) { await save({ storageDir: d }, 'Pasta alterada. Novas gravações serão salvas lá.'); await ctx.reloadList(); draw(); }
   };

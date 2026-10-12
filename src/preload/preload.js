@@ -1,5 +1,5 @@
 // Ponte segura entre as janelas e o processo principal.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const listeners = new Set();
 ipcRenderer.on('evt', (_e, msg) => { for (const fn of listeners) { try { fn(msg.type, msg.payload); } catch (err) { console.error(err); } } });
@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   reveal: inv('shell:reveal'),
   copy: inv('clipboard:write'),
   showMain: (route) => ipcRenderer.send('window:show-main', route),
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
 
   rec: {
     start: inv('rec:start'),
@@ -55,7 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   // Usado pela janela de gravação (oculta)
   recorder: {
     started: (data) => ipcRenderer.send('rec:started', data),
-    stopped: () => ipcRenderer.send('rec:stopped'),
+    stopped: (seq) => ipcRenderer.send('rec:stopped', { seq }),
     chunk: (track, data) => ipcRenderer.send('rec:chunk', { track, data }),
     levels: (lv) => ipcRenderer.send('rec:levels', lv),
     warning: (w) => ipcRenderer.send('rec:warning', w),

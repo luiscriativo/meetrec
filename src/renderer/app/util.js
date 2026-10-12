@@ -82,12 +82,13 @@ export function toast(kind, message, opts = {}) {
 }
 
 // ───────── Modal ─────────
-export function modal({ title, body, actions = [], onMount, wide }) {
+export function modal({ title, body, actions = [], onMount, wide, onClose }) {
   const root = $('#modalRoot');
   root.innerHTML = `<div class="modal-bg"><div class="modal" style="${wide ? 'width:min(680px,calc(100vw - 40px))' : ''}"><h3>${esc(title)}</h3><div class="mbody">${body}</div><div class="foot"></div></div></div>`;
   const bg = root.firstChild;
   const foot = root.querySelector('.foot');
-  const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKey); };
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; root.innerHTML = ''; document.removeEventListener('keydown', onKey); onClose?.(); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   bg.addEventListener('mousedown', (e) => { if (e.target === bg) close(); });
@@ -104,12 +105,13 @@ export function modal({ title, body, actions = [], onMount, wide }) {
 
 export function confirmDialog(title, text, okLabel = 'Confirmar', kind = 'primary') {
   return new Promise((resolve) => {
-    let done = false;
+    // Fechar com Esc ou clicando fora conta como "Cancelar"
     modal({
       title, body: `<p class="muted" style="line-height:1.5;margin:4px 0 0">${esc(text)}</p>`,
+      onClose: () => resolve(false),
       actions: [
-        { label: 'Cancelar', onClick: () => { done = true; resolve(false); } },
-        { label: okLabel, kind, onClick: () => { done = true; resolve(true); } },
+        { label: 'Cancelar', onClick: () => resolve(false) },
+        { label: okLabel, kind, onClick: () => resolve(true) },
       ],
     });
   });
@@ -120,6 +122,7 @@ export function promptDialog(title, label, value = '') {
     modal({
       title,
       body: `<label class="muted" style="font-size:13px">${esc(label)}</label><input class="input" id="pd" style="margin-top:8px" value="${esc(value)}">`,
+      onClose: () => resolve(null),
       onMount: (m, close) => {
         const i = m.querySelector('#pd'); i.focus(); i.select();
         i.onkeydown = (e) => { if (e.key === 'Enter') { resolve(i.value.trim()); close(); } };

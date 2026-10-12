@@ -17,6 +17,7 @@ class Bridge extends EventEmitter {
   }
 
   _empty() {
+    this.frames = new Map();
     return { connected: false, lastSeen: 0, platform: null, inCall: false, meetingTitle: null, speaking: [], participants: [], captionsActive: false, lastCaptionAt: 0, browser: null, eventsCount: 0 };
   }
 
@@ -42,7 +43,12 @@ class Bridge extends EventEmitter {
     const wasConnected = this.state.connected;
     this.state.connected = now - this.state.lastSeen < 12000;
     const captions = now - this.state.lastCaptionAt < 30000;
-    if (!this.state.connected) { this.state.inCall = false; this.state.speaking = []; }
+    if (this.state.connected && this._updateCall(null)) this.emit('status', this.status());
+    if (!this.state.connected && this.state.inCall) {
+      this.frames.clear(); this.state.inCall = false; this.state.speaking = [];
+      this.emit('call', { inCall: false, platform: this.state.platform, title: this.state.meetingTitle });
+      this.emit('status', this.status());
+    }
     if (wasConnected !== this.state.connected || captions !== this.state.captionsActive) {
       this.state.captionsActive = captions;
       this.emit('status', this.status());
@@ -105,15 +111,31 @@ class Bridge extends EventEmitter {
     if (first) this.emit('status', this.status());
   }
 
-  _ingest({ tab = {}, events = [] }) {
-    let changed = false;
-    const st = this.state;
-    if (tab.platform !== undefined && tab.platform !== st.platform) { st.platform = tab.platform; changed = true; }
-    if (tab.inCall !== undefined && tab.inCall !== st.inCall) {
-      st.inCall = tab.inCall; changed = true;
-      this.emit('call', { inCall: tab.inCall, platform: tab.platform, title: tab.title });
+  // Estado da chamada somando todos os frames/abas que reportaram recentemente
+  _updateCall(tab) {
+    const now = Date.now();
+    if (tab && tab.inCall !== undefined) {
+      this.frames.set(tab.frame || 'default', { inCall: !!tab.inCall, platform: tab.platform, title: tab.title, at: now });
     }
-    if (tab.title && tab.title !== st.meetingTitle) { st.meetingTitle = tab.title; changed = true; }
+    for (const [k, f] of this.frames) if (now - f.at > 10000) this.frames.delete(k);
+    const active = [...this.frames.values()].filter((f) => f.inCall).sort((a, b) => b.at - a.at)[0];
+    const st = this.state;
+    let changed = false;
+    const inCall = !!active;
+    if (active?.platform && active.platform !== st.platform) { st.platform = active.platform; changed = true; }
+    if (!active && tab?.platform && !st.platform) { st.platform = tab.platform; changed = true; }
+    if (active?.title && active.title !== st.meetingTitle) { st.meetingTitle = active.title; changed = true; }
+    if (inCall !== st.inCall) {
+      st.inCall = inCall; changed = true;
+      if (!inCall) st.speaking = [];
+      this.emit('call', { inCall, platform: st.platform, title: st.meetingTitle });
+    }
+    return changed;
+  }
+
+  _ingest({ tab = {}, events = [] }) {
+    const st = this.state;
+    let changed = this._updateCall(tab);
     for (const ev of events) {
       st.eventsCount++;
       if (ev.type === 'participants' && Array.isArray(ev.names)) { st.participants = ev.names.slice(0, 200); changed = true; }

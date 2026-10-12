@@ -149,6 +149,18 @@ api.on((type, p) => {
   current?.onEvent?.(type, p);
 });
 
+// ───────── Arrastar e soltar um áudio/vídeo para importar ─────────
+const MEDIA_EXT = /\.(mp3|wav|m4a|mp4|webm|ogg|opus|mkv|mov|aac|flac|wma)$/i;
+document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const files = [...(e.dataTransfer?.files || [])];
+  if (!files.length) return;
+  const media = files.map((f) => api.pathForFile(f)).filter((p) => p && MEDIA_EXT.test(p));
+  if (!media.length) { toast('warn', 'Solte um arquivo de áudio ou vídeo (mp3, m4a, wav, mp4…) para importar.'); return; }
+  for (const p of media) await api.lib.importFile(p);
+});
+
 // ───────── Boas-vindas (primeira execução) ─────────
 function onboarding() {
   const health = state.health || [];

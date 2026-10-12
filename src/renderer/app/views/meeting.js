@@ -6,6 +6,16 @@ let root = null, id = null, data = null, tab = 'summary';
 let editing = false, follow = true, tFilter = '', sig = '', asking = false, askText = '';
 const audio = () => $('#audio');
 
+// Solta o arquivo de áudio (no Windows, um arquivo aberto no player não pode ser apagado nem substituído)
+function releaseAudio() {
+  const a = audio();
+  if (!a) return;
+  a.pause();
+  a.removeAttribute('src');
+  delete a.dataset.src;
+  a.load();
+}
+
 const STEPS = [
   ['audio', 'Preparar áudio', 'waves'],
   ['transcribe', 'Transcrever', 'fileText'],
@@ -19,7 +29,7 @@ export function topbar(route) {
 }
 
 export async function render(el, route) {
-  root = el; id = route.id; tab = route.tab || 'summary'; editing = false; tFilter = ''; asking = false;
+  root = el; id = route.id; tab = route.tab || 'summary'; editing = false; tFilter = ''; asking = false; lastSeg = -1;
   $('#back').onclick = () => ctx.navigate('home');
   el.innerHTML = `<div class="view-inner" style="padding-top:40px"><div class="empty">${ic('loader', 26, 'spin')}</div></div>`;
   await load();
@@ -38,7 +48,7 @@ export async function render(el, route) {
 
 export function destroy() {
   const a = audio();
-  if (a) { a.pause(); a.ontimeupdate = a.onplay = a.onpause = a.onloadedmetadata = a.onended = null; }
+  if (a) { a.ontimeupdate = a.onplay = a.onpause = a.onloadedmetadata = a.onended = a.onerror = null; releaseAudio(); }
   root = null;
 }
 
@@ -98,6 +108,7 @@ function renderHead() {
       '-',
       { icon: 'trash', label: 'Excluir reunião', danger: true, onClick: async () => {
         if (await confirmDialog('Excluir reunião?', `"${data.meta.title}" e todos os arquivos (áudio, transcrição e resumo) irão para a lixeira.`, 'Excluir', 'danger')) {
+          releaseAudio();
           const r = await api.lib.remove(id);
           if (r.ok) ctx.navigate('home'); else toast('error', r.error);
         }

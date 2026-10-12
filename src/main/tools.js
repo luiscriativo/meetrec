@@ -30,6 +30,9 @@ function run(cmd, args = [], opts = {}) {
       return resolve({ code: -1, out: '', err: String(e.message || e) });
     }
     const timer = opts.timeout ? setTimeout(() => { try { child.kill(); } catch {} }, opts.timeout) : null;
+    // Decodifica UTF-8 respeitando caracteres que chegam divididos entre dois blocos
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (d) => { out += d; opts.onStdout?.(String(d)); });
     child.stderr?.on('data', (d) => { err += d; opts.onStderr?.(String(d)); });
     if (opts.input != null) { child.stdin.write(opts.input); child.stdin.end(); }

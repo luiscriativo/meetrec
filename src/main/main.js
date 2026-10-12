@@ -53,7 +53,7 @@ function recTime() {
 
 function recState() {
   return {
-    active: rec.active, id: rec.id, paused: rec.paused, stopping: rec.stopping,
+    active: rec.active, id: rec.id, paused: rec.paused, stopping: rec.stopping, starting: rec.phase === 'starting',
     elapsed: recTime(), tracks: rec.tracks,
     title: rec.id ? library.get(rec.id)?.title : null,
     startedAt: rec.startedAt,
@@ -70,9 +70,14 @@ function send(type, payload) {
 function notify(title, body, onClick) {
   if (!store.get('notifications') || !Notification.isSupported()) return;
   const n = new Notification({ title, body, icon: asset('icon.png'), silent: true });
-  if (onClick) n.on('click', onClick);
+  // Mantém a referência: sem isso o coletor de lixo descarta a notificação e o clique não funciona
+  liveNotifications.add(n);
+  const release = () => liveNotifications.delete(n);
+  n.on('click', () => { release(); onClick ? onClick() : showMain(); });
+  n.on('close', release);
   n.show();
 }
+const liveNotifications = new Set();
 
 function toast(kind, message, opts = {}) { send('toast', { kind, message, ...opts }); }
 
@@ -100,10 +105,19 @@ function createMainWindow(show = true) {
       notify('O MeetRec continua ativo', 'Ele fica na bandeja do sistema. Use o ícone para gravar ou abrir.');
     }
   });
-  mainWin.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  mainWin.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  lockNavigation(mainWin);
   nativeTheme.on('updated', () => {
     if (!mainWin || isMac) return;
     try { mainWin.setTitleBarOverlay({ color: '#00000000', symbolColor: nativeTheme.shouldUseDarkColors ? '#C9C9D6' : '#3A3A48', height: 40 }); } catch {}
+  });
+}
+
+// Impede que a janela troque de página (ex.: soltar um arquivo nela abriria o arquivo no lugar do app)
+function lockNavigation(win) {
+  win.webContents.on('will-navigate', (e, url) => {
+    e.preventDefault();
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
   });
 }
 
@@ -148,6 +162,7 @@ function createOverlay() {
   overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWin.setContentProtection(!!store.get('hideOverlayInShare'));
   overlayWin.loadFile(page('overlay/overlay.html'));
+  lockNavigation(overlayWin);
   let moveTimer;
   overlayWin.on('moved', () => {
     clearTimeout(moveTimer);
@@ -227,13 +242,18 @@ function createTray() {
 }
 
 // ───────────────────────── Gravação ─────────────────────────
-function waitFor(channel, timeout = 20000) {
+// Espera a resposta do gravador para a sessão `seq` (ignora respostas atrasadas de tentativas anteriores)
+function waitFor(channel, seq, timeout = 20000) {
   return new Promise((resolve, reject) => {
+    const h = (_e, data) => {
+      if (data && data.seq !== undefined && data.seq !== seq) return;
+      clearTimeout(t); ipcMain.removeListener(channel, h); resolve(data || {});
+    };
     const t = setTimeout(() => { ipcMain.removeListener(channel, h); reject(new Error('timeout')); }, timeout);
-    const h = (_e, data) => { clearTimeout(t); resolve(data); };
-    ipcMain.once(channel, h);
+    ipcMain.on(channel, h);
   });
 }
+let recSeq = 0;
 
 async function startRecording(opts = {}) {
   if (rec.active) { toast('info', 'Já existe uma gravação em andamento.'); return { ok: false, error: 'already' }; }
@@ -253,20 +273,25 @@ async function startRecording(opts = {}) {
 
   rec.streams = {};
   for (const t of ['mic', 'system', 'mix']) rec.streams[t] = fs.createWriteStream(library.file(meta.id, `${t}.webm`));
-  Object.assign(rec, { active: true, id: meta.id, paused: false, startedAt: Date.now(), pausedTotal: 0, pauseStart: 0, tracks: {}, stopping: false, silentWarned: {} });
+  const seq = ++recSeq;
+  Object.assign(rec, { active: true, phase: 'starting', seq, stopRequested: false, id: meta.id, paused: false, startedAt: Date.now(), pausedTotal: 0, pauseStart: 0, tracks: {}, stopping: false });
 
   send('rec-state', recState());
   showOverlay('starting');
   updateTray();
 
   recorderWin.webContents.send('evt', { type: 'recorder-start', payload: {
-    micDeviceId: s.micDeviceId, captureSystem: s.captureSystem, systemDeviceId: s.systemDeviceId,
+    seq, micDeviceId: s.micDeviceId, captureSystem: s.captureSystem, systemDeviceId: s.systemDeviceId,
     echoCancellation: s.echoCancellation, noiseSuppression: s.noiseSuppression, platform: process.platform, sounds: s.sounds,
   } });
 
   let started;
-  try { started = await waitFor('rec:started', 25000); } catch { started = { ok: false, error: 'O módulo de gravação não respondeu (tempo esgotado).' }; }
+  try { started = await waitFor('rec:started', seq, 25000); } catch {
+    started = { ok: false, error: 'O módulo de gravação não respondeu (tempo esgotado).' };
+    recorderWin?.webContents.send('evt', { type: 'recorder-stop', payload: { seq } }); // garante que nada fique gravando escondido
+  }
   if (!started.ok) {
+    rec.phase = null;
     await closeStreams();
     rec.active = false;
     pipeline.setLowPriority(false);
@@ -280,6 +305,7 @@ async function startRecording(opts = {}) {
     return { ok: false, error: started.error };
   }
   rec.startedAt = Date.now();
+  rec.phase = 'recording';
   rec.tracks = started.tracks;
   if (pipeline.current) {
     pipeline.setLowPriority(true);
@@ -294,6 +320,8 @@ async function startRecording(opts = {}) {
   const what = [started.tracks.mic && 'microfone', started.tracks.system && 'som do computador'].filter(Boolean).join(' + ');
   toast('success', `Gravação iniciada — capturando ${what}.`);
   notify('Gravando reunião', `Capturando ${what}. ${store.get('shortcutToggle').replace('CommandOrControl', isMac ? '⌘' : 'Ctrl')} para parar.`);
+  // Pediram para parar enquanto ainda iniciava: para agora que o gravador está pronto
+  if (rec.stopRequested) setTimeout(() => stopRecording(), 0);
   return { ok: true, id: meta.id };
 }
 
@@ -304,11 +332,16 @@ async function closeStreams() {
 
 async function stopRecording() {
   if (!rec.active || rec.stopping) return;
+  if (rec.phase === 'starting') {
+    rec.stopRequested = true;
+    toast('info', 'A gravação ainda está iniciando — ela será encerrada assim que estiver pronta.');
+    return;
+  }
   rec.stopping = true;
   send('rec-state', recState());
   showOverlay('saving');
-  recorderWin?.webContents.send('evt', { type: 'recorder-stop' });
-  try { await waitFor('rec:stopped', 15000); } catch { /* segue com o que já foi salvo */ }
+  recorderWin?.webContents.send('evt', { type: 'recorder-stop', payload: { seq: rec.seq } });
+  try { await waitFor('rec:stopped', rec.seq, 15000); } catch { /* segue com o que já foi salvo */ }
   await finishRecording();
 }
 
@@ -318,18 +351,23 @@ async function finishRecording({ crashed } = {}) {
   if (rec.paused) rec.pausedTotal += Date.now() - rec.pauseStart;
   await closeStreams();
   rec.active = false;
+  rec.phase = null;
   rec.stopping = false;
   rec.paused = false;
   rec.id = null;
   send('rec-state', recState());
   updateTray();
-  if (!id) return;
-
   pipeline.setLowPriority(false);
+  if (!id) { pipeline.resume(); return; }
+
   library.update(id, { status: 'recorded', endedAt: new Date().toISOString(), duration });
   if (duration < 3) {
-    toast('warn', 'Gravação muito curta (menos de 3 s) — não foi processada.');
-    showOverlay('saved', { message: 'Gravação muito curta', id }, 3500);
+    // Provavelmente um clique sem querer: descarta para não poluir a biblioteca
+    const m = library.get(id);
+    if (!m?.markers?.length && !m?.notes?.trim()) await library.remove(id).catch(() => {});
+    toast('warn', 'Gravação muito curta (menos de 3 s) — descartada.');
+    showOverlay('saved', { message: 'Gravação muito curta — descartada' }, 3500);
+    pipeline.resume();
     return;
   }
   const auto = store.get('autoProcess');
@@ -341,7 +379,7 @@ async function finishRecording({ crashed } = {}) {
 }
 
 function togglePause() {
-  if (!rec.active || rec.stopping) return;
+  if (!rec.active || rec.stopping || rec.phase !== 'recording') return;
   if (!rec.paused) {
     rec.paused = true; rec.pauseStart = Date.now();
     recorderWin?.webContents.send('evt', { type: 'recorder-pause' });
@@ -357,7 +395,7 @@ function togglePause() {
 }
 
 function addMarker(label) {
-  if (!rec.active) return;
+  if (!rec.active || rec.phase !== 'recording') return;
   const t = recTime();
   library.update(rec.id, (m) => { m.markers = [...(m.markers || []), { t, label: label || '' }]; return m; });
   recorderWin?.webContents.send('evt', { type: 'play-sound', payload: 'marker' });
@@ -491,7 +529,21 @@ function setupIpc() {
   // App
   ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, extensionDir: resourcePath('extension'), userData: app.getPath('userData') }));
   ipcMain.handle('settings:get', () => store.get());
-  ipcMain.handle('settings:set', (_e, patch) => store.set(patch));
+  ipcMain.handle('settings:set', (_e, patch) => {
+    patch = { ...patch };
+    if (patch.storageDir !== undefined && rec.active) {
+      delete patch.storageDir;
+      toast('warn', 'Pare a gravação antes de trocar a pasta das gravações.');
+    }
+    if (patch.bridgePort !== undefined) {
+      const port = Math.round(Number(patch.bridgePort));
+      if (!(port >= 1024 && port <= 65535)) {
+        delete patch.bridgePort;
+        toast('error', 'Porta inválida: use um número entre 1024 e 65535.');
+      } else patch.bridgePort = port;
+    }
+    return store.set(patch);
+  });
   ipcMain.handle('dialog:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWin, { properties: ['openDirectory', 'createDirectory'] });
     return r.canceled ? null : r.filePaths[0];
@@ -556,8 +608,8 @@ function setupIpc() {
   ipcMain.handle('lib:saveSummary', (_e, id, text) => { library.writeText(id, 'summary.md', text); return true; });
   ipcMain.handle('lib:delete', async (_e, id) => {
     if (rec.id === id) return { ok: false, error: 'Pare a gravação antes de excluir.' };
-    pipeline.cancel(id);
-    await library.remove(id);
+    pipeline.cancel(id, { silent: true });
+    try { await library.remove(id); } catch (e) { return { ok: false, error: e.message }; }
     toast('success', 'Reunião movida para a lixeira.');
     return { ok: true };
   });
@@ -736,6 +788,11 @@ app.whenReady().then(async () => {
     send('pipeline-failed', { id, error });
     toast('error', error, { duration: 12000, action: { label: 'Ver', route: { view: 'meeting', id } } });
     notify('Falha ao processar reunião', error, () => showMain({ view: 'meeting', id }));
+    updateTray();
+  });
+  pipeline.on('cancelled', ({ id }) => {
+    send('pipeline-failed', { id });
+    toast('info', 'Processamento cancelado. A gravação continua salva — processe quando quiser.');
     updateTray();
   });
   bridge.on('status', (s) => send('bridge', s));

@@ -144,7 +144,19 @@ class Library extends EventEmitter {
 
   async remove(id) {
     const d = this.dir(id);
-    try { await shell.trashItem(d); } catch { fs.rmSync(d, { recursive: true, force: true }); }
+    // Um arquivo pode estar momentaneamente em uso (player, ffmpeg terminando): tenta algumas vezes
+    let failed = true;
+    for (let i = 0; i < 4 && failed; i++) {
+      try { await shell.trashItem(d); failed = false; } catch { failed = fs.existsSync(d); }
+      if (failed) await new Promise((r) => setTimeout(r, 400));
+    }
+    if (failed) {
+      try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch {
+        if (fs.existsSync(path.join(d, 'meta.json'))) {
+          throw new Error('Alguns arquivos desta reunião estão em uso. Feche o áudio dela e tente de novo.');
+        }
+      }
+    }
     this.cache.delete(id);
     this.emit('changed', { id, removed: true });
   }

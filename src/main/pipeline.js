@@ -48,6 +48,15 @@ function parseSummary(text) {
   return { title, actions };
 }
 
+// Substitui `dest` por `src`. No Windows não dá para renomear sobre um arquivo aberto
+// (ex.: o player tocando a reunião); nesse caso sobrescreve o conteúdo e, se nem isso
+// der, mantém o original — o arquivo corrigido só melhora a busca no player.
+function replaceFile(src, dest) {
+  try { fs.renameSync(src, dest); return; } catch {}
+  try { fs.copyFileSync(src, dest); } catch {}
+  try { fs.unlinkSync(src); } catch {}
+}
+
 class Pipeline extends EventEmitter {
   constructor(library, store) {
     super();
@@ -87,7 +96,7 @@ class Pipeline extends EventEmitter {
   status() { return { current: this.current, queued: this.queue.map((j) => j.id) }; }
 
   enqueue(id, from = 'audio') {
-    if (this.isBusy(id)) return false;
+    if (this.isBusy(id) || !this.library.get(id)) return false;
     this.library.resetSteps(id, from);
     this.library.update(id, { status: 'processing', error: null });
     this.queue.push({ id, from });
@@ -98,11 +107,12 @@ class Pipeline extends EventEmitter {
     return true;
   }
 
-  cancel(id) {
+  cancel(id, { silent = false } = {}) {
     const qi = this.queue.findIndex((j) => j.id === id);
     if (qi >= 0) {
       this.queue.splice(qi, 1);
-      this.library.update(id, { status: 'error', error: 'Processamento cancelado.' });
+      this.library.update(id, { status: 'recorded', error: null });
+      if (!silent) this.emit('cancelled', { id });
       return true;
     }
     if (this.current?.id === id) {
@@ -134,10 +144,18 @@ class Pipeline extends EventEmitter {
       this.emit('done', { id, meta: this.library.get(id) });
     } catch (e) {
       const step = this.current.step;
-      const msg = e instanceof UserError ? e.message : `Erro inesperado: ${e.message}`;
-      if (step) this._step(id, step, { state: 'error', message: msg }, true);
-      this.library.update(id, { status: 'error', error: msg });
-      this.emit('failed', { id, step, error: msg, code: e.code });
+      if (!this.library.get(id)) {
+        // A reunião foi excluída durante o processamento: não há o que reportar
+      } else if (this.cancelled || e.code === 'cancelled') {
+        if (step) this._step(id, step, { state: 'pending', progress: 0, message: 'Cancelado' }, true);
+        this.library.update(id, { status: 'recorded', error: null });
+        this.emit('cancelled', { id });
+      } else {
+        const msg = e instanceof UserError ? e.message : `Erro inesperado: ${e.message}`;
+        if (step) this._step(id, step, { state: 'error', message: msg }, true);
+        this.library.update(id, { status: 'error', error: msg });
+        this.emit('failed', { id, step, error: msg, code: e.code });
+      }
     } finally {
       this.current = null;
       this.child = null;
@@ -177,7 +195,7 @@ class Pipeline extends EventEmitter {
         if (!fs.existsSync(src) || fs.statSync(src).size < 1000) { meta.tracks[t] = false; continue; }
         const tmp = f(`${t}.fixed.webm`);
         const r = await run(ffmpegPath(), ['-hide_banner', '-y', '-i', src, '-c', 'copy', tmp], { timeout: 3600e3 });
-        if (r.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0) fs.renameSync(tmp, src);
+        if (r.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0) replaceFile(tmp, src);
         else { try { fs.unlinkSync(tmp); } catch {} }
       }
       this.library.update(id, { tracks: meta.tracks, audioFile: meta.tracks.mix ? 'mix.webm' : (meta.tracks.system ? 'system.webm' : 'mic.webm') });
@@ -185,6 +203,7 @@ class Pipeline extends EventEmitter {
 
     const m2 = this.library.get(id);
     const tracks = Object.entries(m2.tracks).filter(([, v]) => v).map(([k]) => k);
+    if (!tracks.length) throw new UserError('Os arquivos de áudio desta reunião estão vazios — nada foi gravado.');
     let i = 0;
     for (const t of tracks) {
       msg('Analisando volume e duração…', 0.5 + (i++ / tracks.length) * 0.5);
@@ -292,6 +311,9 @@ class Pipeline extends EventEmitter {
     const { meta, settings, header, text } = this.buildContext(id);
     const skill = settings.useSkill ? readSkill() : null;
     const owner = settings.userName || 'Você';
+    const speakerRule = (meta.tracks?.mic || meta.tracks?.system)
+      ? `- "${owner}" é a pessoa que gravou (falas do microfone dela). "Participante" indica outras pessoas não identificadas por nome; se der para deduzir nomes pelo contexto, use-os.`
+      : `- Este áudio foi importado: as falas não estão separadas por pessoa ("Participante" pode ser qualquer um). Deduza nomes pelo contexto quando possível e não presuma que "${owner}" participou.`;
     const prompt = `Gere o resumo de uma reunião gravada pelo app MeetRec.
 
 === INSTRUÇÕES DE FORMATO ${skill ? '(skill resumo-reuniao)' : ''} ===
@@ -300,7 +322,7 @@ ${skill || FALLBACK_FORMAT}
 === REGRAS DESTA EXECUÇÃO (têm prioridade) ===
 - Não use ferramentas, não leia nem salve arquivos: responda SOMENTE com o texto final do resumo, começando pela linha "📋".
 - A transcrição já está abaixo, com horários [mm:ss] e quem falou.
-- "${owner}" é a pessoa que gravou (falas do microfone dela). "Participante" indica outras pessoas não identificadas por nome; se der para deduzir nomes pelo contexto, use-os.
+${speakerRule}
 - Dê atenção especial aos momentos marcados e às anotações do usuário, quando houver.
 ${settings.customInstructions ? `- Instruções adicionais do usuário: ${settings.customInstructions}\n` : ''}
 === DADOS DA REUNIÃO ===
