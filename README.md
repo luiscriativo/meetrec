@@ -85,6 +85,24 @@ Escreva notas e marque momentos enquanto grava. O Claude leva os dois em conta n
 </tr>
 </table>
 
+**📁 Pastas com memória: o Claude aprende o contexto de cada assunto**
+- Crie pastas (por cliente, projeto, time…) e escolha em **Salvar em** onde a gravação vai. Também dá para arrastar reuniões para uma pasta na barra lateral ou usar **Mover para pasta…**. As pastas são pastas de verdade no disco.
+- Cada pasta guarda três coisas que o Claude lê antes de cada resumo:
+  - **Contexto**: do que se trata, quem participa e com qual papel, e os objetivos. Você não escreve do zero: depois da primeira reunião o Claude monta um rascunho, e você só **aprova** ou ajusta. Também dá para montar o contexto a partir de reuniões antigas.
+  - **Glossário**: termos, nomes e siglas que você confirmou.
+  - **Histórico**: decisões e pendências em aberto. O Claude atualiza sozinho a cada reunião.
+
+**❓ Pontos de dúvida: corrija o que a IA não entendeu**
+- No fim de cada resumo, o Claude lista o que não conseguiu entender com certeza: termos mal reconhecidos, nomes, números ambíguos e quem disse o quê.
+- Cada dúvida mostra o trecho da transcrição e um botão ▶ para **ouvir o áudio naquele ponto**. Você corrige, confirma ou ignora.
+- O que você corrige:
+  - é trocado na transcrição;
+  - vira um esclarecimento para o próximo resumo (**Refazer resumo com as correções**);
+  - com **Lembrar nesta pasta**, entra no glossário.
+- A partir daí, o glossário melhora as próximas transcrições de duas formas:
+  1. os termos vão como vocabulário para o Whisper;
+  2. as grafias erradas que você **já confirmou** são corrigidas automaticamente.
+
 **🧰 E mais**
 - **Biblioteca** de reuniões agrupada por dia, com busca em títulos, transcrições e resumos.
 - **Importe** áudios e vídeos existentes (mp3, m4a, wav, mp4, mkv…) para transcrever e resumir.
@@ -253,7 +271,8 @@ Em **Configurações → Resumo** você escolhe o modelo do Claude (Sonnet, Opus
 
 ## 🔒 Seus dados
 
-- Cada reunião fica numa pasta em `Documentos/MeetRec - Reuniões/<data>/`, com `meta.json`, os áudios (`mic.webm`, `system.webm`, `mix.webm`), `transcript.json`/`.txt` e `summary.md`. É só abrir, copiar ou fazer backup.
+- Cada reunião fica numa pasta em `Documentos/MeetRec - Reuniões/[sua pasta/]<data>/`, com `meta.json`, os áudios (`mic.webm`, `system.webm`, `mix.webm`), `transcript.json`/`.txt` e `summary.md`. É só abrir, copiar ou fazer backup.
+- Cada pasta que você cria tem uma subpasta `_contexto/` com `pasta.json` e cópias legíveis: `CONTEXTO.md`, `GLOSSARIO.md` e `HISTORICO.md`. Assim você também pode abrir a pasta direto no Claude Code e conversar sobre todas as reuniões do assunto. O glossário geral, das reuniões sem pasta, fica em `_contexto/` na raiz.
 - O que sai do computador:
   - **a transcrição em texto** vai para o Claude, pelo seu Claude Code;
   - **o áudio** vai para a nuvem **só** se você escolher Groq ou OpenAI.
@@ -286,6 +305,7 @@ npm start
 |---|---|
 | `npm start` | Abre o app em modo de desenvolvimento |
 | `npm run check` | Valida a sintaxe de todo o JS (CommonJS e módulos ES), JSON e Python |
+| `npm test` | Testes da lógica de pastas, glossário, correções e do bloco de dúvidas (`node --test`) |
 | `npm run dist:win` / `dist:mac` / `dist:linux` | Gera o instalador localmente em `dist/` |
 | `npm run icons` | Regera os ícones do app, da bandeja e da extensão |
 
@@ -311,6 +331,7 @@ src/
 │  ├─ diagnostics.js     verificações e instalação do motor local
 │  ├─ updater.js         atualização automática pelas releases do GitHub
 │  ├─ library.js         biblioteca de reuniões (pastas + meta.json)
+│  ├─ folders.js         pastas: glossário, correções, vocabulário e bloco de dúvidas
 │  └─ store.js           configurações (chaves criptografadas)
 ├─ preload/              ponte segura (contextIsolation)
 └─ renderer/

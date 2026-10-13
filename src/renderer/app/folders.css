@@ -1,0 +1,95 @@
+/* ───────── Pastas, contexto e pontos de dúvida ───────── */
+.col { display: flex; flex-direction: column; }
+
+/* Barra lateral */
+.nav-folders { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--border); max-height: 34vh; overflow-y: auto; }
+.nav .nav-folder { height: 30px; font-size: 13px; gap: 8px; padding: 0 8px; flex-shrink: 0; }
+.nav .nav-folder .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.nav .nav-folder .count { background: transparent; padding: 0 2px; }
+.nav .nav-folder.add { color: var(--muted); }
+.nav .nav-folder.add:hover { color: var(--accent); }
+.nav .nav-folder.drop { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dragging-meeting .nav-folder:not(.add) { outline: 1px dashed var(--border-strong); outline-offset: -2px; }
+.draft-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex-shrink: 0; box-shadow: 0 0 0 3px var(--warn-soft); }
+
+/* Lista */
+.mt.dragging { opacity: .45; }
+.mt .s .in-folder { color: var(--accent); font-weight: 550; }
+.mt .s .has-doubts { color: var(--warn); font-weight: 650; }
+
+.save-in { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--text-2); font-weight: 550; }
+.save-in .select { height: 30px; width: auto; min-width: 170px; max-width: 260px; padding: 0 8px; font-size: 13px; }
+
+.folder-head { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin: 4px 0 16px; }
+.folder-head.attn { border-color: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.fh-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
+.fh-ico.big { width: 54px; height: 54px; border-radius: 15px; }
+.fh-desc { font-weight: 550; line-height: 1.4; }
+.fh-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+
+/* Reunião */
+.folder-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 20px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.folder-chip:hover { border-color: var(--accent); }
+.folder-chip.none { background: transparent; color: var(--muted); border: 1px dashed var(--border-strong); }
+.folder-chip.none:hover { color: var(--accent); border-color: var(--accent); }
+
+.folder-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; max-height: 50vh; overflow: auto; }
+.folder-pick .fp { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; text-align: left; font-weight: 550; }
+.folder-pick .fp:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.folder-pick .fp:disabled { opacity: .6; cursor: default; }
+.folder-pick .fp.new { border-style: dashed; color: var(--accent); }
+.field-err { color: var(--rec); font-size: 12.5px; min-height: 16px; margin-top: 8px; }
+
+/* Tela da pasta */
+.fold-top { display: flex; gap: 16px; align-items: flex-start; margin: 10px 0 6px; }
+.fold-name { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.fold-desc { margin-top: 8px; border-color: transparent; background: transparent; padding-left: 0; font-size: 14px; }
+.fold-desc:hover { border-color: var(--border); padding-left: 12px; }
+.fold-desc:focus { padding-left: 12px; background: var(--surface); }
+.draft-card { padding: 18px 20px; margin-top: 18px; border-color: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.draft-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--warn-soft); color: var(--warn); flex-shrink: 0; }
+.draft-body { margin-top: 14px; padding: 14px 16px; border-radius: 12px; background: var(--surface-2); }
+.cv-row { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding: 7px 0; line-height: 1.5; }
+.cv-row + .cv-row { border-top: 1px solid var(--border); }
+.cv-l { color: var(--muted); font-size: 12.5px; font-weight: 600; padding-top: 2px; }
+.cv-people { display: flex; gap: 6px; flex-wrap: wrap; }
+.cv-goals { margin: 0; padding-left: 18px; }
+.cv-new { background: var(--ok-soft); border-radius: 6px; box-shadow: 0 0 0 2px var(--ok-soft); }
+.spk.cv-new { border-color: var(--ok); }
+.f-l { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+.f-l:first-child { margin-top: 0; }
+.f-l .muted { font-weight: 500; font-size: 12px; }
+.part-row { display: grid; grid-template-columns: 1fr 1.3fr 28px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.gl-row { display: grid; grid-template-columns: minmax(120px, 200px) 1fr auto 28px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 9px; }
+.gl-row:hover { background: var(--surface-2); }
+.gl-term { font-weight: 650; }
+.gl-heard { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--muted); }
+.gl-add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding: 8px; border-top: 1px solid var(--border); margin-top: 4px; }
+.gl-add .input { height: 30px; font-size: 13px; }
+.doc.hist { padding: 0; font-size: 14px; }
+
+/* Pontos de dúvida */
+.doubts { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-sm); padding: 16px 18px; }
+.doubts-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.dh-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--warn-soft); color: var(--warn); flex-shrink: 0; }
+.doubts-head b { font-size: 14.5px; margin-right: 6px; }
+.doubts-empty { margin-top: 14px; font-size: 12.5px; display: flex; align-items: center; gap: 6px; color: var(--ok); }
+.doubts-empty.muted { color: var(--muted); }
+.doubt { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-top: 10px; background: var(--bg); }
+.doubt .dq { display: flex; align-items: center; gap: 8px; }
+.doubt .dq b { font-weight: 600; line-height: 1.4; }
+.doubt .play-at { height: 24px; padding: 0 7px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.doubt .dx { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.doubt .dx .who { font-weight: 650; color: var(--text); margin-right: 4px; }
+.doubt .dx mark { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); padding: 0 1px; }
+.doubt .da { display: flex; gap: 6px; margin-top: 10px; }
+.doubt .da .input { height: 34px; }
+.doubt .dr { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.doubt .dr input { accent-color: var(--accent); }
+.doubts-done { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.doubt-done { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 8px; border-radius: 8px; }
+.doubt-done .ic { color: var(--ok); flex-shrink: 0; }
+.doubt-done.ignored { opacity: .65; }
+.doubt-done.ignored .ic { color: var(--muted); }
+.doubt-done > .muted { font-size: 11.5px; white-space: nowrap; }
+.regen-banner { align-items: center; margin: 4px 0 6px; }

@@ -9,28 +9,84 @@ let hist = { mic: [], system: [] };
 let raf = null;
 let markers = [];
 let devices = { mic: null };
+let folder; // undefined = todas · '' = sem pasta · nome da pasta
 
 const STEP_LABEL = { audio: 'Preparando áudio', transcribe: 'Transcrevendo', speakers: 'Identificando falantes', summary: 'Gerando resumo' };
+const DRAG_TYPE = 'application/x-meetrec-id';
 
-export function topbar() {
-  return `<h1>Reuniões</h1>
+const folderLabel = (f) => (f === undefined ? 'Reuniões' : f === '' ? 'Sem pasta' : f);
+
+export function topbar(route = {}) {
+  const f = route.folder;
+  return `${f !== undefined ? `<span class="crumb" id="crumbAll">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span>` : ''}<h1>${f ? ic('folder', 16) : ''}${esc(folderLabel(f))}</h1>
     <div class="grow"></div>
-    <div class="search no-drag" style="width:280px">${ic('search', 15)}<input class="input" id="q" placeholder="Buscar em títulos, transcrições e resumos…" value="${esc(query)}"></div>
-    <button class="btn no-drag" id="impBtn" title="Transcrever um arquivo de áudio/vídeo existente">${ic('upload', 15)} Importar</button>`;
+    <div class="search no-drag" style="width:280px">${ic('search', 15)}<input class="input" id="q" placeholder="${f ? `Buscar em “${esc(f)}”…` : 'Buscar em títulos, transcrições e resumos…'}" value="${esc(query)}"></div>
+    <button class="btn no-drag" id="impBtn" title="Transcrever um arquivo de áudio/vídeo existente${f ? ` (vai para a pasta “${esc(f)}”)` : ''}">${ic('upload', 15)} Importar</button>`;
 }
 
-export function render(el) {
+export function render(el, route = {}) {
   root = el;
-  el.innerHTML = `<div class="view-inner"><div id="liveArea"></div><div id="listArea"></div></div>`;
+  folder = route.folder;
+  // A pasta que você está vendo é onde a próxima gravação será salva
+  if (folder !== undefined && (state.settings.recordFolder || '') !== folder) api.setSettings({ recordFolder: folder });
+  el.innerHTML = `<div class="view-inner"><div id="folderArea"></div><div id="liveArea"></div><div id="listArea"></div></div>`;
   $('#q').oninput = debounce(async (e) => {
     query = e.target.value;
     filterIds = query.trim() ? new Set(await api.lib.search(query)) : null;
     renderList();
   }, 250);
-  $('#impBtn').onclick = () => api.lib.importFile();
+  $('#impBtn').onclick = () => api.lib.importFile(null, folder);
+  if ($('#crumbAll')) $('#crumbAll').onclick = () => ctx.navigate({ view: 'home' });
   loadDevices();
+  renderFolderHead();
   renderLive();
   renderList();
+}
+
+// ───────── Cabeçalho da pasta (contexto, glossário, histórico) ─────────
+function renderFolderHead() {
+  const area = $('#folderArea');
+  if (!area) return;
+  const f = folder ? state.folders.find((x) => x.name === folder) : null;
+  if (!f) { area.innerHTML = ''; return; }
+  const status = f.hasDraft
+    ? `<span class="chip warn">${ic('sparkles', 11)} Contexto sugerido — confira</span>`
+    : f.hasContext ? `<span class="chip ok">${ic('check', 11)} Contexto aprovado</span>`
+      : `<span class="chip">${ic('clock', 11)} Contexto será montado após a 1ª reunião</span>`;
+  area.innerHTML = `<div class="card folder-head ${f.hasDraft ? 'attn' : ''}">
+    <div class="fh-ico">${ic('folder', 22)}</div>
+    <div class="grow">
+      <div class="fh-desc">${f.description ? esc(f.description) : '<span class="muted">Reuniões desta pasta compartilham contexto, glossário e histórico.</span>'}</div>
+      <div class="fh-meta">${status}
+        <span class="chip">${ic('book', 11)} ${f.glossary} ${f.glossary === 1 ? 'termo' : 'termos'} no glossário</span>
+        ${f.hasHistory ? `<span class="chip">${ic('history', 11)} Histórico ativo</span>` : ''}
+      </div>
+    </div>
+    <button class="btn ${f.hasDraft ? 'primary' : ''}" id="openCtx">${ic(f.hasDraft ? 'sparkles' : 'brain', 15)} ${f.hasDraft ? 'Conferir contexto' : 'Contexto da pasta'}</button>
+  </div>`;
+  $('#openCtx').onclick = () => ctx.navigate({ view: 'folder', name: folder });
+}
+
+function folderSelectHtml() {
+  const cur = state.settings.recordFolder || '';
+  const valid = !cur || state.folders.some((f) => f.name === cur);
+  return `<label class="save-in" title="Pasta onde a gravação será salva — o Claude usa o contexto dela no resumo">${ic('folder', 13)} Salvar em
+    <select class="select" id="saveIn"><option value="" ${!cur || !valid ? 'selected' : ''}>Sem pasta</option>${state.folders.map((f) => `<option value="${esc(f.name)}" ${f.name === cur ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="__new">+ Nova pasta…</option></select></label>`;
+}
+
+function bindFolderSelect() {
+  const s = $('#saveIn');
+  if (!s) return;
+  s.onchange = async () => {
+    let v = s.value;
+    if (v === '__new') {
+      const { createFolderDialog } = await import('../folders-ui.js');
+      v = await createFolderDialog();
+      if (v == null) { s.value = state.settings.recordFolder || ''; return; }
+    }
+    await api.setSettings({ recordFolder: v });
+    toast('info', v ? `As próximas gravações vão para a pasta “${v}”.` : 'As próximas gravações ficam em “Sem pasta”.');
+  };
 }
 
 export function destroy() { cancelAnimationFrame(raf); raf = null; root = null; }
@@ -69,6 +125,7 @@ async function renderLive() {
             <span class="chip">${ic('waves', 13)} ${esc(engName)}</span>
             <span class="chip ${claude ? (claude.state === 'ok' ? 'ok' : 'err') : ''}">${ic('sparkles', 13)} Claude ${claude ? (claude.state === 'ok' ? 'pronto' : 'indisponível') : '…'}</span>
           </div>
+          ${folderSelectHtml()}
           <div id="sugg">${sugg}</div>
         </div>
         <div class="hero-side">
@@ -78,6 +135,7 @@ async function renderLive() {
       </div>`;
     $('#bigRec').onclick = () => api.rec.start();
     bindSugg();
+    bindFolderSelect();
     return;
   }
 
@@ -94,6 +152,7 @@ async function renderLive() {
           <div class="muted" style="font-size:12.5px;display:flex;gap:10px;flex-wrap:wrap;margin-top:2px">
             <span>${r.starting ? 'Iniciando — conectando ao microfone e ao som do PC…' : `${r.stopping ? 'Salvando…' : r.paused ? 'Pausado' : 'Gravando'} desde ${started}`}</span>
             ${meta?.platform ? `<span>· ${esc(meta.platform)}</span>` : ''}
+            ${meta?.folder ? `<span title="O resumo vai usar o contexto desta pasta">· ${ic('folder', 12)} ${esc(meta.folder)}</span>` : ''}
             <span class="chip ${r.tracks?.mic ? 'accent' : 'err'}" style="height:20px">${ic(r.tracks?.mic ? 'mic' : 'micOff', 12)} ${r.tracks?.mic ? 'Microfone' : 'Sem microfone'}</span>
             <span class="chip ${r.tracks?.system ? 'ok' : 'err'}" style="height:20px">${ic('speaker', 12)} ${r.tracks?.system ? 'Som do PC' : 'Sem som do PC'}</span>
           </div>
@@ -224,13 +283,17 @@ function statusInfo(m) {
 function renderList() {
   const area = $('#listArea');
   if (!area) return;
-  let list = state.list;
+  const scope = folder === undefined ? state.list : state.list.filter((m) => (m.folder || '') === folder);
+  let list = scope;
   if (filterIds) list = list.filter((m) => filterIds.has(m.id));
-  if (!state.list.length) {
-    area.innerHTML = `<div class="empty"><div class="big">${ic('waves', 30)}</div><h3>Nenhuma reunião gravada ainda</h3><div>Clique em <b>Gravar reunião</b> quando a próxima começar, ou importe um áudio existente.</div></div>`;
+  if (!scope.length) {
+    area.innerHTML = folder
+      ? `<div class="empty"><div class="big">${ic('folder', 30)}</div><h3>Pasta vazia</h3><div>Grave com <b>Salvar em: ${esc(folder)}</b> selecionado, importe um áudio aqui ou arraste reuniões da lista para esta pasta na barra lateral.</div></div>`
+      : folder === '' ? `<div class="empty"><div class="big">${ic('checkCircle', 30)}</div><h3>Tudo organizado</h3><div>Todas as reuniões estão em pastas.</div></div>`
+        : `<div class="empty"><div class="big">${ic('waves', 30)}</div><h3>Nenhuma reunião gravada ainda</h3><div>Clique em <b>Gravar reunião</b> quando a próxima começar, ou importe um áudio existente.</div></div>`;
     return;
   }
-  const pending = state.list.filter((m) => m.status === 'recorded' || m.status === 'interrupted');
+  const pending = scope.filter((m) => m.status === 'recorded' || m.status === 'interrupted');
   const groups = new Map();
   for (const m of list) {
     const g = dayGroup(m.createdAt);
@@ -240,11 +303,15 @@ function renderList() {
   const item = (m) => {
     const st = statusInfo(m);
     const people = (m.participants || []).slice(0, 4);
-    return `<div class="mt" data-id="${m.id}">
+    const canDrag = m.status !== 'recording' && m.status !== 'processing';
+    const openDoubts = (m.doubts || []).filter((d) => d.status === 'open').length;
+    return `<div class="mt" data-id="${m.id}" draggable="${canDrag}" title="${canDrag && state.folders.length ? 'Arraste para uma pasta na barra lateral para organizar' : ''}">
       <div class="avatar ${st.av}">${ic(st.icon, 19, st.spin ? 'spin' : '')}</div>
       <div style="min-width:0">
         <div class="t">${esc(m.title)}</div>
         <div class="s">
+          ${folder === undefined && m.folder ? `<span class="in-folder">${ic('folder', 12)} ${esc(m.folder)}</span>` : ''}
+          ${openDoubts ? `<span class="has-doubts" title="Pontos de dúvida do Claude esperando sua confirmação">${ic('help', 12)} ${openDoubts}</span>` : ''}
           <span>${ic('calendar', 12)} ${fmtDate(m.createdAt)}</span>
           ${m.duration ? `<span>${ic('clock', 12)} ${fmtDuration(m.duration)}</span>` : ''}
           ${m.platform ? `<span>${ic('globe', 12)} ${esc(m.platform)}</span>` : ''}
@@ -259,15 +326,24 @@ function renderList() {
       </div>
     </div>`;
   };
-  area.innerHTML = `<div class="list-head"><h3>${filterIds ? `Resultados para “${esc(query)}”` : 'Suas reuniões'}</h3><span class="muted">${list.length}</span><div class="grow"></div>${pending.length ? `<button class="btn sm primary" id="procPending" title="Transcreve e resume, uma por vez, as gravações ainda não processadas">${ic('sparkles', 13)} Processar pendentes (${pending.length})</button>` : ''}<button class="btn ghost sm" id="openRoot">${ic('folder', 14)} Abrir pasta</button></div>`
+  area.innerHTML = `<div class="list-head"><h3>${filterIds ? `Resultados para “${esc(query)}”` : folder ? 'Reuniões da pasta' : 'Suas reuniões'}</h3><span class="muted">${list.length}</span><div class="grow"></div>${pending.length ? `<button class="btn sm primary" id="procPending" title="Transcreve e resume, uma por vez, as gravações ainda não processadas">${ic('sparkles', 13)} Processar pendentes (${pending.length})</button>` : ''}<button class="btn ghost sm" id="openRoot">${ic('folder', 14)} Abrir no explorador</button></div>`
     + (list.length ? [...groups].map(([g, ms]) => `<div class="group-label">${esc(g)}</div><div class="meetings">${ms.map(item).join('')}</div>`).join('')
       : `<div class="empty"><h3>Nada encontrado</h3><div>Tente outra palavra.</div></div>`);
-  $('#openRoot').onclick = () => api.lib.openFolder();
+  $('#openRoot').onclick = () => (folder ? api.folders.open(folder) : api.lib.openFolder());
   if ($('#procPending')) $('#procPending').onclick = async () => {
     for (const m of pending) await api.pipe.process(m.id, 'audio');
     toast('success', `${pending.length} reunião(ões) na fila. Elas serão processadas uma de cada vez, em segundo plano.`);
   };
-  $$('.mt', area).forEach((el) => (el.onclick = () => ctx.navigate({ view: 'meeting', id: el.dataset.id })));
+  $$('.mt', area).forEach((el) => {
+    el.onclick = () => ctx.navigate({ view: 'meeting', id: el.dataset.id });
+    el.ondragstart = (e) => {
+      e.dataTransfer.setData(DRAG_TYPE, el.dataset.id);
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('dragging');
+      document.body.classList.add('dragging-meeting');
+    };
+    el.ondragend = () => { el.classList.remove('dragging'); document.body.classList.remove('dragging-meeting'); };
+  });
 }
 
 const renderListThrottled = (() => { let t = null; return () => { if (t) return; t = setTimeout(() => { t = null; renderList(); }, 500); }; })();
@@ -280,7 +356,13 @@ export function onEvent(type, p) {
     hist.mic.push(p.mic); hist.system.push(p.system);
     if (hist.mic.length > 600) { hist.mic.splice(0, 200); hist.system.splice(0, 200); }
   }
-  else if (type === 'list-reloaded' || type === 'pipeline-done' || type === 'pipeline-failed') renderList();
+  else if (type === 'list-reloaded' || type === 'pipeline-done' || type === 'pipeline-failed') { renderList(); renderFolderHead(); }
+  else if (type === 'folders-reloaded') {
+    // A pasta aberta foi renomeada/excluída em outro lugar: volta para todas
+    if (folder && !state.folders.some((f) => f.name === folder)) return ctx.navigate({ view: 'home' });
+    renderFolderHead(); renderList();
+    if (!state.rec.active) renderLive();
+  }
   else if (type === 'pipeline') renderListThrottled();
   else if (type === 'bridge') { renderSpeaking(); if (!state.rec.active) { const s = $('#sugg'); if (s) { s.innerHTML = suggestionHtml(); bindSugg(); } } }
   else if (type === 'detector') { if (!state.rec.active) { const s = $('#sugg'); if (s) { s.innerHTML = suggestionHtml(); bindSugg(); } } }

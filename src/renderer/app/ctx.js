@@ -3,6 +3,7 @@ export const state = {
   settings: {},
   info: {},
   list: [],
+  folders: [],        // [{ name, count, description, hasContext, hasDraft, glossary, hasHistory }]
   rec: { active: false },
   levels: { mic: 0, system: 0 },
   bridge: {},
@@ -20,6 +21,7 @@ export const ctx = {
   refreshSidebar: () => {},
   reloadList: async () => {},
   runHealth: async () => {},
+  reloadFolders: async () => {},
 };
 
 export const api = window.api;

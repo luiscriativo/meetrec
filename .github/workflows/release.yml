@@ -107,6 +107,8 @@ jobs:
       - run: npm ci
       - name: Sintaxe (JavaScript, módulos ES, JSON e Python)
         run: npm run check
+      - name: Testes
+        run: npm test
 
   build:
     name: Build ${{ matrix.name }}
