@@ -35,6 +35,8 @@ function draw() {
   if (!root || !data) return;
   root.innerHTML = `<div class="view-inner">
     ${name ? headHtml() : `<div class="banner info" style="margin-top:8px">${ic('info', 16)}<div>Termos que você confirma em reuniões <b>sem pasta</b> ficam aqui e valem para <b>todas</b> as reuniões. Termos de uma pasta valem só para ela.</div></div>`}
+    ${name ? sizeHtml() : ''}
+    ${name ? slimHtml() : ''}
     ${name ? draftHtml() : ''}
     ${name ? contextHtml() : ''}
     ${glossaryHtml()}
@@ -60,6 +62,77 @@ function headHtml() {
       </div>
     </div>
   </div>`;
+}
+
+// ───────── Tamanho da memória (o que vai para cada resumo) ─────────
+const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace('.', ',')} mil` : String(n));
+
+function sizeHtml() {
+  const s = data.size;
+  if (!s || (!s.historyChars && !s.contextChars)) return '';
+  const pct = Math.min(100, Math.round((s.historyChars / s.historyMax) * 100));
+  const label = s.level === 'big' ? 'Memória grande — vale enxugar' : s.level === 'warn' ? 'Memória crescendo' : 'Memória em bom tamanho';
+  const why = [
+    s.historyChars >= s.historyMax ? 'o histórico chegou ao limite e está sendo cortado' : '',
+    s.stale ? `${s.stale} ${s.stale === 1 ? 'pendência antiga' : 'pendências antigas'} (sem menção nas últimas reuniões)` : '',
+    s.contextChars > 2500 ? 'o contexto está longo' : '',
+  ].filter(Boolean).join(' · ');
+  const working = busy === 'slim';
+  return `<div class="card mem-card ${s.level}">
+    <div class="row" style="gap:12px;align-items:center">
+      <span class="mem-ico">${ic(s.level === 'ok' ? 'checkCircle' : 'alert', 16)}</span>
+      <div class="grow">
+        <b>${label}</b>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">Vai para cada resumo: contexto ${k(s.contextChars)} · histórico ${k(s.historyChars)} de ${k(s.historyMax)} caracteres · do glossário (${s.glossary} ${s.glossary === 1 ? 'termo' : 'termos'}) só os que aparecem na reunião${why ? ` — ${esc(why)}` : ''}.</div>
+        <div class="mem-bar"><i style="width:${pct}%"></i></div>
+      </div>
+      ${data.history && !data.slim ? `<button class="btn ${s.level === 'ok' ? 'ghost' : 'primary'} sm" id="slimBtn" ${busy ? 'disabled' : ''} title="O Claude junta itens repetidos, tira o que foi resolvido e propõe uma versão curta — você aprova antes de valer">${ic(working ? 'loader' : 'wand', 13, working ? 'spin' : '')} ${working ? esc(busyMsg || 'Enxugando…') : 'Enxugar com o Claude'}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function slimHtml() {
+  const p = data.slim;
+  if (!p) return '';
+  const before = (data.history || '').length, after = p.history.length;
+  return `<div class="card draft-card">
+    <div class="row" style="align-items:flex-start;gap:12px">
+      <span class="draft-ico">${ic('wand', 18)}</span>
+      <div class="grow">
+        <b>Proposta para enxugar a memória da pasta</b>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">Histórico de ${k(before)} para ${k(after)} caracteres${p.context ? ' · contexto também resumido' : ''}. Nada muda até você aprovar.</div>
+      </div>
+    </div>
+    ${p.removed?.length ? `<div class="slim-removed"><div class="cv-l" style="margin-bottom:4px">O que sai</div>${p.removed.map((r) => `<div class="sr">${ic('x', 12)} ${esc(r)}</div>`).join('')}</div>` : ''}
+    <div class="draft-body"><div class="cv-l" style="margin-bottom:6px">Novo histórico</div><div class="doc hist">${histLines(p.history)}</div></div>
+    ${p.context ? `<div class="draft-body"><div class="cv-l" style="margin-bottom:6px">Novo contexto</div>${contextView(p.context, data.context)}</div>` : ''}
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn ghost" id="discardSlim">${ic('x', 14)} Descartar</button>
+      <button class="btn primary" id="approveSlim">${ic('check', 14)} Aprovar</button>
+    </div>
+  </div>`;
+}
+
+// Histórico com as pendências "(antiga)" destacadas
+// Com `actions`, cada pendência antiga ganha os botões "Encerrar" e "Ainda vale"
+function histLines(h, actions = false) {
+  return String(h || '').split('\n').map((l, i) => {
+    if (!/\(antiga\)/i.test(l)) return esc(l);
+    const btns = actions ? `<span class="stale-acts"><button class="btn sm ghost" data-stale-close="${i}" title="Tirar do histórico">${ic('check', 12)} Encerrar</button><button class="btn sm ghost" data-stale-keep="${i}" title="Continua valendo: tira a marca de antiga">Ainda vale</button></span>` : '';
+    return `<span class="stale-line" title="Sem menção nas últimas reuniões — ainda vale?">${esc(l)}</span>${btns}`;
+  }).join('\n');
+}
+
+async function editStale(i, keep) {
+  const lines = String(data.history || '').split('\n');
+  if (!lines[i]) return;
+  const today = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  if (keep) lines[i] = lines[i].replace(/\s*\(antiga\)/i, '').replace(/\(últ\. menção [^)]*\)/i, `(últ. menção ${today})`);
+  else lines.splice(i, 1);
+  const r = await api.folders.update(name, { history: lines.join('\n') });
+  if (!r.ok) return toast('error', r.error);
+  toast('success', keep ? 'Mantida — conta como mencionada hoje.' : 'Pendência encerrada.');
+  ctx.reloadFolders(); refresh();
 }
 
 // ───────── Sugestão do Claude aguardando aprovação ─────────
@@ -107,19 +180,19 @@ function contextHtml() {
     const canBoot = data.summarized > 0;
     return title + `<div class="card card-pad empty" style="padding:26px">
       <div class="big">${ic('sparkles', 26)}</div>
-      <h3>${busy ? 'Montando o contexto…' : data.draft ? 'Confira a sugestão acima' : 'O contexto é montado automaticamente'}</h3>
-      <div style="max-width:520px;margin:0 auto 14px">${busy ? esc(busyMsg || 'O Claude está lendo os resumos desta pasta…')
+      <h3>${busy === 'boot' ? 'Montando o contexto…' : data.draft ? 'Confira a sugestão acima' : 'O contexto é montado automaticamente'}</h3>
+      <div style="max-width:520px;margin:0 auto 14px">${busy === 'boot' ? esc(busyMsg || 'O Claude está lendo os resumos desta pasta…')
         : data.draft ? 'Aprove (ou ajuste) a sugestão do Claude e ela vira o contexto da pasta.'
           : canBoot ? `Esta pasta já tem ${data.summarized} ${data.summarized === 1 ? 'reunião resumida' : 'reuniões resumidas'}. O Claude pode montar o contexto a partir ${data.summarized === 1 ? 'dela' : 'delas'} agora.`
             : 'Depois da primeira reunião resumida nesta pasta, o Claude sugere quem participa, do que se trata e os objetivos — você só confere e aprova.'}</div>
       <div class="row" style="justify-content:center;gap:8px">
-        ${busy ? ic('loader', 18, 'spin') : `${canBoot && !data.draft ? `<button class="btn primary" id="bootBtn">${ic('sparkles', 14)} Montar a partir das reuniões</button>` : ''}<button class="btn ${canBoot && !data.draft ? 'ghost' : ''}" id="manualBtn">${ic('edit', 14)} Preencher eu mesmo</button>`}
+        ${busy === 'boot' ? ic('loader', 18, 'spin') : `${canBoot && !data.draft ? `<button class="btn primary" id="bootBtn">${ic('sparkles', 14)} Montar a partir das reuniões</button>` : ''}<button class="btn ${canBoot && !data.draft ? 'ghost' : ''}" id="manualBtn">${ic('edit', 14)} Preencher eu mesmo</button>`}
       </div>
     </div>`;
   }
   return title + `<div class="card card-pad">
     <div class="row" style="margin-bottom:10px"><span class="chip ok">${ic('check', 11)} Aprovado</span>${data.contextAt ? `<span class="muted" style="font-size:12px">${fmtDate(data.contextAt)}</span>` : ''}<div class="grow"></div>
-      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao Claude para revisar o contexto com base em todos os resumos da pasta">${ic(busy ? 'loader' : 'refresh', 13, busy ? 'spin' : '')} ${busy ? esc(busyMsg || 'Revisando…') : 'Revisar com o Claude'}</button>` : ''}
+      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao Claude para revisar o contexto com base em todos os resumos da pasta">${ic(busy === 'boot' ? 'loader' : 'refresh', 13, busy === 'boot' ? 'spin' : '')} ${busy === 'boot' ? esc(busyMsg || 'Revisando…') : 'Revisar com o Claude'}</button>` : ''}
       <button class="btn sm" id="editCtx">${ic('edit', 13)} Editar</button></div>
     ${contextView(c)}
   </div>`;
@@ -177,7 +250,7 @@ function historyHtml() {
   <div class="card card-pad">
     ${editHistory ? `<textarea class="textarea" id="histIn" rows="10">${esc(h)}</textarea>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="histCancel">Cancelar</button><button class="btn primary" id="histSave">${ic('check', 14)} Salvar</button></div>`
-      : h ? `<div class="row" style="margin-bottom:8px">${data.historyAt ? `<span class="muted" style="font-size:12px">Atualizado ${fmtDate(data.historyAt)}</span>` : ''}<div class="grow"></div><button class="btn sm ghost" id="histEdit">${ic('edit', 13)} Editar</button></div><div class="doc hist">${esc(h)}</div>`
+      : h ? `<div class="row" style="margin-bottom:8px">${data.historyAt ? `<span class="muted" style="font-size:12px">Atualizado ${fmtDate(data.historyAt)}</span>` : ''}<div class="grow"></div><button class="btn sm ghost" id="histEdit">${ic('edit', 13)} Editar</button></div><div class="doc hist">${histLines(h, true)}</div>`
         : `<div class="muted" style="font-size:13px">Começa a ser preenchido no próximo resumo de uma reunião desta pasta. Você não precisa escrever nada.</div>`}
   </div>`;
 }
@@ -187,12 +260,23 @@ async function refresh() { await load(); if (root) draw(); }
 
 async function bootstrap() {
   if (busy) return;
-  busy = true; busyMsg = 'Iniciando o Claude Code…'; draw();
+  busy = 'boot'; busyMsg = 'Iniciando o Claude Code…'; draw();
   const r = await api.folders.bootstrap(name);
   busy = false; busyMsg = '';
   if (!r.ok) toast('error', r.error);
   else toast('success', r.message);
   await refresh();
+}
+
+async function slim() {
+  if (busy) return;
+  busy = 'slim'; busyMsg = 'Iniciando o Claude Code…'; draw();
+  const r = await api.folders.slim(name);
+  busy = false; busyMsg = '';
+  if (!r.ok) toast('error', r.error);
+  else toast('success', r.message);
+  await refresh();
+  if (r.ok) $('.draft-card')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 function bind() {
@@ -237,6 +321,21 @@ function bind() {
   on('#editCtx', () => { editing = 'ctx'; draw(); });
   on('#manualBtn', () => { editing = 'ctx'; draw(); });
   on('#bootBtn', bootstrap);
+  on('#slimBtn', slim);
+  $$('[data-stale-close]').forEach((b) => (b.onclick = () => editStale(+b.dataset.staleClose, false)));
+  $$('[data-stale-keep]').forEach((b) => (b.onclick = () => editStale(+b.dataset.staleKeep, true)));
+  on('#approveSlim', async () => {
+    const r = await api.folders.approveSlim(name);
+    if (!r.ok) return toast('error', r.error);
+    toast('success', 'Memória da pasta enxugada. Os próximos resumos já usam a versão nova.');
+    ctx.reloadFolders(); refresh();
+  });
+  on('#discardSlim', async () => {
+    const r = await api.folders.discardSlim(name);
+    if (!r.ok) return toast('error', r.error);
+    toast('info', 'Proposta descartada — a memória continua como estava.');
+    ctx.reloadFolders(); refresh();
+  });
   on('#addPart', () => { $('#fParts').insertAdjacentHTML('beforeend', partRow({})); bindParts(); $$('#fParts .pn').pop()?.focus(); });
   bindParts();
   on('#cancelForm', () => { editing = false; draw(); });
@@ -283,8 +382,8 @@ export function onEvent(type, p) {
   if (!root) return;
   if (type === 'folder-status' && p.name === name && busy) {
     busyMsg = p.message;
-    const b = $('#bootBtn'); if (b) b.innerHTML = `${ic('loader', 13, 'spin')} ${esc(busyMsg)}`;
-    else draw();
+    const b = $(busy === 'slim' ? '#slimBtn' : '#bootBtn'); if (b) b.innerHTML = `${ic('loader', 13, 'spin')} ${esc(busyMsg)}`;
+    else if (!editing && !editHistory) draw();
   } else if (type === 'folders-reloaded' && !editing && !editHistory && !busy && document.activeElement?.id !== 'descIn' && !document.activeElement?.closest?.('.gl-add')) {
     if (name && !state.folders.some((f) => f.name === name)) return ctx.navigate({ view: 'home' });
     refresh();

@@ -454,7 +454,7 @@ function folderPayload(name) {
   const d = library.getFolder(name);
   if (!d) return null;
   const meetings = library.list().filter((m) => (m.folder || '') === (name || ''));
-  return { name: name || '', ...d, dir: library.folderDir(name), count: meetings.length, summarized: meetings.filter(hasSummary).length };
+  return { name: name || '', ...d, dir: library.folderDir(name), count: meetings.length, summarized: meetings.filter(hasSummary).length, size: F.folderSize(d) };
 }
 
 async function moveMeeting(id, folder) {
@@ -775,6 +775,19 @@ function setupIpc() {
     const r = await pipeline.bootstrapFolder(name, (m) => e.sender.send('evt', { type: 'folder-status', payload: { name, message: m } }));
     return r;
   }));
+  ipcMain.handle('folder:slim', wrap(async (e, name) => {
+    const r = await pipeline.slimFolder(name, (m) => e.sender.send('evt', { type: 'folder-status', payload: { name, message: m } }));
+    return r;
+  }));
+  ipcMain.handle('folder:approveSlim', wrap((_e, name) => {
+    const f = library.getFolder(name);
+    if (!f?.slim) throw new Error('Não há proposta para aprovar.');
+    const p = { history: f.slim.history, historyAt: new Date().toISOString(), slim: null };
+    if (f.slim.context) { p.context = f.slim.context; p.contextAt = new Date().toISOString(); }
+    library.updateFolder(name, p);
+    return {};
+  }));
+  ipcMain.handle('folder:discardSlim', wrap((_e, name) => { library.updateFolder(name, { slim: null }); return {}; }));
   ipcMain.handle('folder:open', (_e, name) => {
     const d = library.ctxDir(name);
     fs.mkdirSync(d, { recursive: true });
