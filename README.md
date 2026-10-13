@@ -91,6 +91,11 @@ Escreva notas e marque momentos enquanto grava. O Claude leva os dois em conta n
   - **Contexto**: do que se trata, quem participa e com qual papel, e os objetivos. Você não escreve do zero: depois da primeira reunião o Claude monta um rascunho, e você só **aprova** ou ajusta. Também dá para montar o contexto a partir de reuniões antigas.
   - **Glossário**: termos, nomes e siglas que você confirmou.
   - **Histórico**: decisões e pendências em aberto. O Claude atualiza sozinho a cada reunião.
+- A memória não incha com o tempo:
+  - do glossário, só vão para o Claude os termos que aparecem na reunião, mais os mais usados;
+  - o histórico tem limite de 3 mil caracteres, garantido pelo app;
+  - pendências sem menção nas últimas reuniões são marcadas como **antigas** e ganham os botões **Encerrar** e **Ainda vale**.
+- A tela da pasta mostra o tamanho da memória. Quando ela cresce, o botão **Enxugar com o Claude** propõe uma versão curta, mostrando o que sai. Nada muda até você aprovar.
 
 **❓ Pontos de dúvida: corrija o que a IA não entendeu**
 - No fim de cada resumo, o Claude lista o que não conseguiu entender com certeza: termos mal reconhecidos, nomes, números ambíguos e quem disse o quê.

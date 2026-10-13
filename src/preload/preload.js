@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld('api', {
     approveDraft: inv('folder:approveDraft'),
     discardDraft: inv('folder:discardDraft'),
     bootstrap: inv('folder:bootstrap'),
+    slim: inv('folder:slim'),
+    approveSlim: inv('folder:approveSlim'),
+    discardSlim: inv('folder:discardSlim'),
     open: inv('folder:open'),
   },
 

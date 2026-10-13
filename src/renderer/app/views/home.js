@@ -60,6 +60,9 @@ function renderFolderHead() {
       <div class="fh-meta">${status}
         <span class="chip">${ic('book', 11)} ${f.glossary} ${f.glossary === 1 ? 'termo' : 'termos'} no glossário</span>
         ${f.hasHistory ? `<span class="chip">${ic('history', 11)} Histórico ativo</span>` : ''}
+        ${f.hasSlim ? `<span class="chip warn">${ic('wand', 11)} Proposta para enxugar — confira</span>`
+          : f.size === 'big' ? `<span class="chip err" title="O histórico chegou ao limite ou tem muitas pendências antigas">${ic('alert', 11)} Memória grande — vale enxugar</span>`
+            : f.size === 'warn' ? `<span class="chip warn">${ic('alert', 11)} Memória crescendo</span>` : ''}
       </div>
     </div>
     <button class="btn ${f.hasDraft ? 'primary' : ''}" id="openCtx">${ic(f.hasDraft ? 'sparkles' : 'brain', 15)} ${f.hasDraft ? 'Conferir contexto' : 'Contexto da pasta'}</button>

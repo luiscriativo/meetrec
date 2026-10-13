@@ -27,6 +27,7 @@ function emptyFolderData() {
     glossary: [],       // [{ term, heard:[], uses, addedAt }] — só termos que o usuário confirmou
     history: '',        // decisões e pendências, mantido pelo Claude
     historyAt: null,
+    slim: null,         // proposta do "Enxugar com o Claude" aguardando aprovação { history, context, removed, at }
     createdAt: new Date().toISOString(),
   };
 }
@@ -41,6 +42,7 @@ function normalizeFolderData(d) {
     draft: d.draft ? { ...d.draft, ...normalizeContext(d.draft) } : null,
     glossary: Array.isArray(d.glossary) ? d.glossary.filter((g) => g && g.term).map((g) => ({ term: String(g.term), heard: [...new Set((g.heard || []).map(String).filter(Boolean))], uses: g.uses || 1, addedAt: g.addedAt || null })) : [],
     history: typeof d.history === 'string' ? d.history : '',
+    slim: d.slim && typeof d.slim.history === 'string' ? { ...d.slim, context: d.slim.context ? normalizeContext(d.slim.context) : null, removed: Array.isArray(d.slim.removed) ? d.slim.removed : [] } : null,
   };
 }
 
@@ -116,6 +118,48 @@ function applyCorrections(segments, pairs) {
     return text === s.text ? s : { ...s, text };
   });
   return { segments: out, count };
+}
+
+// Glossário que vai para o Claude: os termos que aparecem nesta reunião (ou suas variantes)
+// + os mais usados, para ele reconhecer variações novas. Pastas antigas não enchem o prompt.
+function relevantGlossary(glossary, text, { top = 15 } = {}) {
+  const hay = norm(text);
+  const has = (s) => s && hay.includes(norm(s));
+  const list = glossary || [];
+  const present = list.filter((g) => has(g.term) || (g.heard || []).some(has));
+  const extra = list.filter((g) => !present.includes(g)).sort((a, b) => (b.uses || 0) - (a.uses || 0)).slice(0, Math.max(0, top - present.length));
+  return [...present, ...extra];
+}
+
+// ───────── Tamanho da memória da pasta ─────────
+const HISTORY_MAX = 3000;
+const CUT_NOTE = '• (…histórico cortado por tamanho — use “Enxugar com o Claude” na tela da pasta)';
+
+// Corta o histórico numa quebra de linha para não passar de `max` caracteres.
+function capHistory(text, max = HISTORY_MAX) {
+  const t = String(text || '').trim();
+  if (t.length <= max) return { text: t, cut: false };
+  const lines = t.split('\n');
+  const out = [];
+  let len = 0;
+  for (const l of lines) {
+    if (len + l.length + 1 > max - CUT_NOTE.length - 1) break;
+    out.push(l);
+    len += l.length + 1;
+  }
+  return { text: [...out, CUT_NOTE].join('\n'), cut: true };
+}
+
+const staleLines = (history) => String(history || '').split('\n').filter((l) => /\(antiga\)/i.test(l)).length;
+
+// Quanto da pasta vai para cada resumo e se está na hora de enxugar
+function folderSize(d) {
+  const contextChars = ((d?.description || '') + contextToText(d?.context)).length;
+  const historyChars = (d?.history || '').length;
+  const stale = staleLines(d?.history);
+  const ratio = historyChars / HISTORY_MAX;
+  const level = ratio >= 1 || stale >= 6 ? 'big' : ratio >= 0.75 || stale >= 3 || contextChars > 2500 ? 'warn' : 'ok';
+  return { contextChars, historyChars, historyMax: HISTORY_MAX, stale, glossary: (d?.glossary || []).length, level };
 }
 
 // Camada 1: vocabulário enviado ao Whisper (o prompt dele aceita ~224 tokens).
@@ -222,6 +266,7 @@ module.exports = {
   CTX_DIR, MEETING_DIR, DOUBT_KINDS,
   sanitizeFolderName, emptyFolderData, normalizeFolderData, normalizeContext, contextIsEmpty,
   addGlossaryTerm, replaceWord, correctionPairs, applyCorrections, buildVocabulary,
+  relevantGlossary, capHistory, folderSize, staleLines, HISTORY_MAX,
   splitSummary, visiblePart, normalizeDoubts, parseTime,
   contextToText, glossaryToText, renderContextMd, renderGlossaryMd, renderHistoryMd,
 };

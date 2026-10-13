@@ -227,6 +227,8 @@ class Library extends EventEmitter {
       hasDraft: !!d.draft,
       glossary: d.glossary.length,
       hasHistory: !!d.history,
+      size: F.folderSize(d).level,
+      hasSlim: !!d.slim,
     })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   }
 
