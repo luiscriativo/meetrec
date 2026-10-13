@@ -37,6 +37,7 @@ function defaults() {
     claudeModel: '',
     useSkill: true,
     customInstructions: '',
+    recordFolder: '', // pasta onde novas gravações e importações são salvas ('' = Sem pasta)
 
     detectMeetings: true,
     autoStopSuggest: true,

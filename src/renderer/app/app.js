@@ -1,12 +1,14 @@
 // Shell da aplicação: navegação, barra lateral, eventos globais.
 import { state, ctx, api } from './ctx.js';
-import { $, ic, esc, toast, modal, fmtTime, prettyShortcut, debounce, confirmDialog } from './util.js';
+import { $, $$, ic, esc, toast, modal, fmtTime, prettyShortcut, debounce, confirmDialog } from './util.js';
 import * as Home from './views/home.js';
 import * as Meeting from './views/meeting.js';
 import * as Settings from './views/settings.js';
 import * as Diagnostics from './views/diagnostics.js';
+import * as Folder from './views/folder.js';
+import { createFolderDialog, moveMeeting } from './folders-ui.js';
 
-const VIEWS = { home: Home, meeting: Meeting, settings: Settings, diagnostics: Diagnostics };
+const VIEWS = { home: Home, meeting: Meeting, settings: Settings, diagnostics: Diagnostics, folder: Folder };
 let current = null;
 
 function applyTheme() {
@@ -29,25 +31,70 @@ function navigate(route) {
   renderNav();
 }
 
-function renderNav() {
-  const r = state.route.view;
-  const items = [
-    ['home', 'list', 'Reuniões', state.list.length || ''],
-    ['import', 'upload', 'Importar áudio', ''],
-    ['sep'],
-    ['diagnostics', 'activity', 'Diagnóstico', ''],
-    ['settings', 'settings', 'Configurações', ''],
-  ];
-  $('#nav').innerHTML = items.map(([id, icn, label, count]) => id === 'sep' ? '<div class="nav-sep"></div>'
-    : `<button data-v="${id}" class="${r === id || (id === 'home' && r === 'meeting') ? 'active' : ''}">${ic(icn, 17)}${label}${count ? `<span class="count">${count}</span>` : ''}</button>`).join('');
+// Pasta "em foco" na navegação (undefined = todas as reuniões, '' = sem pasta)
+function activeFolder() {
+  const r = state.route;
+  if (r.view === 'folder') return r.name;
+  if (r.view === 'home') return r.folder;
+  if (r.view === 'meeting') return state.list.find((m) => m.id === r.id)?.folder ?? undefined;
+  return undefined;
 }
 
-$('#nav').addEventListener('click', (e) => {
+function renderNav() {
+  const r = state.route.view;
+  const af = activeFolder();
+  const allActive = (r === 'home' && af === undefined) || (r === 'meeting' && af === '');
+  const btn = (id, icn, label, count, active) => `<button data-v="${id}" class="${active ? 'active' : ''}">${ic(icn, 17)}${label}${count ? `<span class="count">${count}</span>` : ''}</button>`;
+  const loose = state.list.filter((m) => !m.folder).length;
+  const folders = state.folders.map((f) => `<button class="nav-folder ${af === f.name && r !== 'settings' && r !== 'diagnostics' ? 'active' : ''}" data-folder="${esc(f.name)}" title="${esc(f.description || f.name)}">${ic('folder', 15)}<span class="nm">${esc(f.name)}</span>${f.hasDraft ? '<span class="draft-dot" title="O Claude sugeriu um contexto para você conferir"></span>' : ''}<span class="count">${f.count || ''}</span></button>`).join('');
+  $('#nav').innerHTML = btn('home', 'list', 'Reuniões', state.list.length || '', allActive)
+    + `<div class="nav-folders">
+        ${state.folders.length ? `<button class="nav-folder ${af === '' && r === 'home' ? 'active' : ''}" data-folder="" title="Reuniões fora de qualquer pasta">${ic('fileText', 15)}<span class="nm">Sem pasta</span><span class="count">${loose || ''}</span></button>` : ''}
+        ${folders}
+        <button class="nav-folder add" id="navNewFolder" title="Criar uma pasta para agrupar reuniões do mesmo assunto">${ic('plus', 15)}<span class="nm">Nova pasta</span></button>
+      </div>`
+    + btn('import', 'upload', 'Importar áudio', '', false)
+    + '<div class="nav-sep"></div>'
+    + btn('diagnostics', 'activity', 'Diagnóstico', '', r === 'diagnostics')
+    + btn('settings', 'settings', 'Configurações', '', r === 'settings');
+}
+
+$('#nav').addEventListener('click', async (e) => {
+  if (e.target.closest('#navNewFolder')) {
+    const name = await createFolderDialog();
+    if (name != null) navigate({ view: 'home', folder: name });
+    return;
+  }
+  const f = e.target.closest('button[data-folder]');
+  if (f) return navigate({ view: 'home', folder: f.dataset.folder });
   const b = e.target.closest('button[data-v]');
   if (!b) return;
   if (b.dataset.v === 'import') return api.lib.importFile();
   navigate({ view: b.dataset.v });
 });
+
+// Arrastar uma reunião da lista e soltar numa pasta da barra lateral
+const DRAG_TYPE = 'application/x-meetrec-id';
+$('#nav').addEventListener('dragover', (e) => {
+  const f = e.target.closest('button[data-folder]');
+  if (!f || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  $$('.nav-folder.drop').forEach((x) => x !== f && x.classList.remove('drop'));
+  f.classList.add('drop');
+});
+$('#nav').addEventListener('dragleave', (e) => { const f = e.target.closest('button[data-folder]'); if (f && !f.contains(e.relatedTarget)) f.classList.remove('drop'); });
+$('#nav').addEventListener('drop', async (e) => {
+  const f = e.target.closest('button[data-folder]');
+  const id = e.dataTransfer.getData(DRAG_TYPE);
+  $$('.nav-folder.drop').forEach((x) => x.classList.remove('drop'));
+  if (!f || !id) return;
+  e.preventDefault();
+  e.stopPropagation();
+  await moveMeeting(id, f.dataset.folder);
+});
+document.addEventListener('dragend', () => $$('.nav-folder.drop').forEach((x) => x.classList.remove('drop')));
 
 // ───────── Botão de gravação da barra lateral ─────────
 function renderRecCta() {
@@ -180,10 +227,12 @@ $('#ver').addEventListener('click', () => navigate({ view: 'settings', tab: 'gen
 
 ctx.navigate = navigate;
 ctx.refreshSidebar = () => { renderNav(); renderSideStatus(); renderRecCta(); };
-ctx.reloadList = async () => { state.list = await api.lib.list(); renderNav(); renderSideStatus(); };
+ctx.reloadList = async () => { [state.list, state.folders] = await Promise.all([api.lib.list(), api.folders.list()]); renderNav(); renderSideStatus(); };
+ctx.reloadFolders = async () => { state.folders = await api.folders.list(); renderNav(); current?.onEvent?.('folders-reloaded'); };
 ctx.runHealth = async () => { state.health = await api.diag.run(); renderSideStatus(); current?.onEvent?.('health'); return state.health; };
 
 const reloadListDebounced = debounce(async () => { await ctx.reloadList(); current?.onEvent?.('list-reloaded'); }, 200);
+const reloadFoldersDebounced = debounce(() => ctx.reloadFolders(), 150);
 
 // ───────── Eventos do processo principal ─────────
 api.on((type, p) => {
@@ -196,6 +245,7 @@ api.on((type, p) => {
     }
     case 'navigate': navigate(p); break;
     case 'library': reloadListDebounced(); break;
+    case 'folders': reloadFoldersDebounced(); break;
     case 'rec-state':
       if (!p.active) state.recWarnings = [];
       state.rec = p; renderRecCta(); break;
@@ -232,6 +282,7 @@ const MEDIA_EXT = /\.(mp3|wav|m4a|mp4|webm|ogg|opus|mkv|mov|aac|flac|wma)$/i;
 document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
 document.addEventListener('drop', async (e) => {
   e.preventDefault();
+  if (e.dataTransfer?.types.includes(DRAG_TYPE)) return; // reunião arrastada e solta fora de uma pasta
   const files = [...(e.dataTransfer?.files || [])];
   if (!files.length) return;
   const media = files.map((f) => api.pathForFile(f)).filter((p) => p && MEDIA_EXT.test(p));
@@ -261,10 +312,10 @@ function onboarding() {
 
 // ───────── Inicialização ─────────
 (async () => {
-  const [settings, info, list, rec, bridge, apps, pipe, update] = await Promise.all([
-    api.getSettings(), api.appInfo(), api.lib.list(), api.rec.state(), api.bridgeStatus(), api.detectorApps(), api.pipe.status(), api.update.status(),
+  const [settings, info, list, rec, bridge, apps, pipe, update, folders] = await Promise.all([
+    api.getSettings(), api.appInfo(), api.lib.list(), api.rec.state(), api.bridgeStatus(), api.detectorApps(), api.pipe.status(), api.update.status(), api.folders.list(),
   ]);
-  Object.assign(state, { settings, info, list, rec, bridge, detectorApps: apps, update });
+  Object.assign(state, { settings, info, list, rec, bridge, detectorApps: apps, update, folders });
   if (pipe.current) state.progress[pipe.current.id] = {};
   document.documentElement.classList.add(`platform-${info.platform}`);
   $('#logo').innerHTML = ic('waves', 15);

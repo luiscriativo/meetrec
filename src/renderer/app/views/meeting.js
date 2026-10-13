@@ -1,6 +1,7 @@
 // Tela de uma reunião: status do processamento, player, resumo, transcrição, ações, chat com o Claude e notas.
 import { state, ctx, api } from '../ctx.js';
 import { $, $$, ic, esc, fmtTime, fmtDuration, fmtDate, colorFor, initials, toast, confirmDialog, promptDialog, popMenu, debounce } from '../util.js';
+import { pickFolderDialog, moveMeeting } from '../folders-ui.js';
 
 let root = null, id = null, data = null, tab = 'summary';
 let editing = false, follow = true, tFilter = '', sig = '', asking = false, askText = '';
@@ -25,12 +26,19 @@ const STEPS = [
 
 export function topbar(route) {
   const m = state.list.find((x) => x.id === route.id);
-  return `<span class="crumb" id="back">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span><h1 style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m?.title || 'Reunião')}</h1>`;
+  return `<span class="crumb" id="back">${ic('chevronLeft', 16)} ${m?.folder ? `${ic('folder', 14)} ${esc(m.folder)}` : 'Reuniões'}</span><span class="muted">/</span><h1 style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m?.title || 'Reunião')}</h1>`;
+}
+
+function bindBack() {
+  $('#back').onclick = () => {
+    const f = data?.meta?.folder ?? state.list.find((x) => x.id === id)?.folder;
+    ctx.navigate(f ? { view: 'home', folder: f } : 'home');
+  };
 }
 
 export async function render(el, route) {
   root = el; id = route.id; tab = route.tab || 'summary'; editing = false; tFilter = ''; asking = false; lastSeg = -1;
-  $('#back').onclick = () => ctx.navigate('home');
+  bindBack();
   el.innerHTML = `<div class="view-inner" style="padding-top:40px"><div class="empty">${ic('loader', 26, 'spin')}</div></div>`;
   await load();
   if (!data) { el.innerHTML = `<div class="view-inner"><div class="empty"><h3>Reunião não encontrada</h3><button class="btn" id="bk">Voltar</button></div></div>`; $('#bk').onclick = () => ctx.navigate('home'); return; }
@@ -57,7 +65,7 @@ async function load() { data = await api.lib.get(id); }
 function signature() {
   if (!data) return '';
   const m = data.meta;
-  return [m.status, data.summary?.length || 0, data.transcript?.segments?.length || 0, JSON.stringify(m.speakerNames || {}), (m.chat || []).length, m.audioFile].join('|');
+  return [m.status, data.summary?.length || 0, data.transcript?.segments?.length || 0, JSON.stringify(m.speakerNames || {}), (m.chat || []).length, m.audioFile, m.folder || '', (m.doubts || []).map((d) => d.status).join(',')].join('|');
 }
 
 const names = (s) => data.meta.speakerNames?.[s] || s;
@@ -70,6 +78,7 @@ function renderHead() {
     <div class="grow">
       <input class="m-title" id="mTitle" value="${esc(m.title)}" title="Clique para renomear">
       <div class="m-meta">
+        <button class="folder-chip ${m.folder ? '' : 'none'}" id="folderChip" title="${m.folder ? 'O resumo usa o contexto, o glossário e o histórico desta pasta. Clique para mover.' : 'Coloque numa pasta para o Claude usar o contexto das reuniões do mesmo assunto'}">${ic('folder', 13)} ${m.folder ? esc(m.folder) : 'Sem pasta — mover…'}</button>
         <span>${ic('calendar', 14)} ${fmtDate(m.createdAt)}</span>
         ${m.duration ? `<span>${ic('clock', 14)} ${fmtDuration(m.duration)}</span>` : ''}
         ${m.platform ? `<span>${ic('globe', 14)} ${esc(m.platform)}</span>` : ''}
@@ -86,15 +95,19 @@ function renderHead() {
     if (!v) return;
     await api.lib.update(id, { title: v });
     toast('success', 'Título atualizado.');
-    $('#topbar').innerHTML = topbar({ id }); $('#back').onclick = () => ctx.navigate('home');
+    await ctx.reloadList();
+    $('#topbar').innerHTML = topbar({ id }); bindBack();
   };
   $('#mTitle').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
   if ($('#copySum')) $('#copySum').onclick = copySummary;
+  $('#folderChip').onclick = askMove;
   $('#moreBtn').onclick = (e) => {
     e.stopPropagation();
     const busy = data.meta.status === 'processing';
     popMenu($('.m-actions'), [
-      { icon: 'folder', label: 'Abrir pasta da reunião', onClick: () => api.lib.openFolder(id) },
+      { icon: 'folder', label: 'Mover para pasta…', onClick: askMove },
+      ...(data.meta.folder ? [{ icon: 'brain', label: `Contexto da pasta “${data.meta.folder}”`, onClick: () => ctx.navigate({ view: 'folder', name: data.meta.folder }) }] : []),
+      { icon: 'external', label: 'Abrir pasta da reunião', onClick: () => api.lib.openFolder(id) },
       '-',
       { icon: 'download', label: 'Exportar resumo (.md)', onClick: () => api.lib.exportItem(id, 'summary') },
       { icon: 'download', label: 'Exportar transcrição (.txt)', onClick: () => api.lib.exportItem(id, 'transcript') },
@@ -115,6 +128,25 @@ function renderHead() {
       } },
     ]);
   };
+}
+
+async function askMove() {
+  const m = data.meta;
+  if (m.status === 'processing' || m.status === 'recording') return toast('info', 'Aguarde a gravação/processamento terminar para mover esta reunião.');
+  const dest = await pickFolderDialog(m.folder || '');
+  if (dest == null || dest === (m.folder || '')) return;
+  // No Windows a pasta não pode ser movida com o áudio aberto no player
+  const a = audio(); const t = a?.currentTime || 0;
+  releaseAudio();
+  const ok = await moveMeeting(id, dest);
+  await load();
+  if (!root || !data) return;
+  sig = signature();
+  $('#topbar').innerHTML = topbar({ id }); bindBack();
+  renderHead();
+  await renderPlayer();
+  if (t && audio()) audio().currentTime = t;
+  if (ok && data.summary && dest) toast('info', 'Gere o resumo novamente para o Claude usar o contexto da nova pasta.', { action: { label: 'Gerar novamente', onClick: () => api.pipe.process(id, 'summary') } });
 }
 
 async function copySummary() {
@@ -246,8 +278,9 @@ document.addEventListener('keydown', (e) => {
 function renderTabs() {
   const segs = data.transcript?.segments?.length || 0;
   const acts = data.meta.actions?.length || 0;
+  const openDoubts = (data.meta.doubts || []).filter((d) => d.status === 'open').length;
   const t = [
-    ['summary', 'sparkles', 'Resumo', ''],
+    ['summary', 'sparkles', 'Resumo', openDoubts ? `<span title="Pontos de dúvida abertos" style="display:inline-flex;align-items:center;gap:3px">${ic('help', 11)}${openDoubts}</span>` : ''],
     ['transcript', 'fileText', 'Transcrição', segs],
     ['actions', 'checkCircle', 'Itens de ação', acts],
     ['ask', 'message', 'Perguntar ao Claude', ''],
@@ -293,7 +326,9 @@ function renderSummary(el) {
         ${s.generatedAt ? `<span>${ic('sparkles', 12)} Gerado pelo Claude Code${s.model ? ` (${esc(s.model)})` : ''} em ${fmtDate(s.generatedAt)}</span>` : ''}
         ${s.durationMs ? `<span>${ic('clock', 12)} ${Math.round(s.durationMs / 1000)}s</span>` : ''}
         ${s.costUsd != null ? `<span>US$ ${Number(s.costUsd).toFixed(3)}</span>` : ''}
-      </div>`;
+      </div>
+      <div id="doubts">${doubtsHtml()}</div>`;
+    bindDoubts();
     $('#copy2').onclick = copySummary;
     $('#editBtn').onclick = () => { editing = true; renderBody(); };
     $('#regen').onclick = async () => { if (await confirmDialog('Gerar o resumo novamente?', 'O resumo atual será substituído (a transcrição é mantida).', 'Gerar novamente')) api.pipe.process(id, 'summary'); };
@@ -309,6 +344,116 @@ function renderSummary(el) {
     <div style="margin-bottom:14px">${hasTr ? 'A transcrição está pronta. Gere o resumo com o Claude Code.' : 'Transcreva a reunião para gerar o resumo.'}</div>
     <button class="btn primary" id="mk">${ic('sparkles', 14)} ${hasTr ? 'Gerar resumo' : 'Transcrever e resumir'}</button></div>`;
   $('#mk').onclick = () => api.pipe.process(id, hasTr ? 'summary' : 'audio');
+}
+
+// ───────── Pontos de dúvida ─────────
+const KIND_LABEL = { termo: 'Termo', nome: 'Nome', numero: 'Número/data', falante: 'Quem falou', trecho: 'Trecho' };
+const dState = {}; // rascunho das respostas enquanto a tela re-renderiza
+
+// Trecho da transcrição em volta do horário da dúvida, com a palavra destacada
+function excerptFor(d) {
+  const segs = data.transcript?.segments || [];
+  if (!segs.length) return null;
+  let seg = null;
+  if (d.heard) {
+    const h = d.heard.toLowerCase();
+    const hits = segs.filter((s) => s.text.toLowerCase().includes(h));
+    seg = d.t != null ? hits.sort((a, b) => Math.abs(a.start - d.t) - Math.abs(b.start - d.t))[0] : hits[0];
+  }
+  if (!seg && d.t != null) seg = segs.reduce((best, s) => (Math.abs(s.start - d.t) < Math.abs(best.start - d.t) ? s : best), segs[0]);
+  if (!seg) return null;
+  let html = esc(seg.text);
+  if (d.heard) html = html.replace(new RegExp(esc(d.heard).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (x) => `<mark>${x}</mark>`);
+  return { seg, html };
+}
+
+function doubtsHtml() {
+  const list = data.meta.doubts || [];
+  const s = data.meta.summary || {};
+  if (!list.length) {
+    if (!s.generatedAt) return '';
+    // Resumos de antes desta versão não têm a lista (doubts ausente) — não dá para dizer que "não houve dúvidas"
+    return s.blockError || !Array.isArray(data.meta.doubts)
+      ? `<div class="doubts-empty muted">${ic('info', 13)} Este resumo não trouxe a lista de pontos de dúvida. Gere novamente para o Claude listá-los.</div>`
+      : `<div class="doubts-empty">${ic('checkCircle', 14)} O Claude não teve dúvidas sobre a transcrição desta reunião.</div>`;
+  }
+  const open = list.filter((d) => d.status === 'open');
+  const done = list.filter((d) => d.status !== 'open');
+  const changedSince = done.some((d) => d.status !== 'ignored' && d.resolvedAt && (!s.generatedAt || d.resolvedAt > s.generatedAt));
+  const folder = data.meta.folder;
+  const remLabel = folder ? 'Lembrar nesta pasta' : 'Lembrar em todas as reuniões';
+  const remTitle = folder ? `Entra no glossário da pasta “${folder}”: as próximas transcrições já saem corrigidas` : 'Entra no glossário geral: vale para todas as reuniões';
+  const card = (d) => {
+    const ex = excerptFor(d);
+    const st = dState[d.id] || {};
+    const val = st.answer ?? d.suggestion ?? '';
+    const canRemember = d.kind === 'nome' || d.kind === 'termo';
+    return `<div class="doubt" data-d="${d.id}">
+      <div class="dq">
+        <span class="chip">${esc(KIND_LABEL[d.kind] || 'Dúvida')}</span>
+        ${d.t != null || ex ? `<button class="btn sm ghost play-at" data-t="${ex ? ex.seg.start : d.t}" title="Ouvir o trecho">${ic('play', 10)} ${fmtTime(ex ? ex.seg.start : d.t)}</button>` : ''}
+        <b class="grow">${esc(d.question)}</b>
+      </div>
+      ${ex ? `<div class="dx"><span class="who">${esc(names(ex.seg.speaker))}:</span> “${ex.html}”</div>` : d.heard ? `<div class="dx">Transcrição: “<mark>${esc(d.heard)}</mark>”</div>` : ''}
+      <div class="da">
+        <input class="input" data-in placeholder="${canRemember && d.heard ? `Como deveria ser? (no lugar de “${esc(d.heard)}”)` : 'Sua resposta ou correção'}" value="${esc(val)}">
+        <button class="btn primary" data-act="fix">${ic('check', 14)} Corrigir</button>
+        ${d.heard ? `<button class="btn" data-act="ok" title="A transcrição está certa">Está certo</button>` : ''}
+        <button class="btn ghost" data-act="ignore" title="Não sei / não importa">Ignorar</button>
+      </div>
+      ${canRemember ? `<label class="dr" title="${esc(remTitle)}"><input type="checkbox" data-rem ${st.remember === false ? '' : 'checked'}> ${esc(remLabel)}</label>` : ''}
+    </div>`;
+  };
+  const doneLine = (d) => {
+    const what = d.status === 'fixed'
+      ? ((d.kind === 'termo' || d.kind === 'nome') && d.heard && d.answer && d.answer !== d.heard ? `“${esc(d.heard)}” → <b>“${esc(d.answer)}”</b>` : `${esc(d.question)} → <b>${esc(d.answer || '')}</b>`)
+      : d.status === 'ok' ? `“${esc(d.heard || d.question)}” está certo` : `${esc(d.question)}`;
+    const extra = [d.replaced ? `${d.replaced}× corrigido na transcrição` : '', d.remembered ? (folder ? 'lembrado na pasta' : 'lembrado no glossário geral') : ''].filter(Boolean).join(' · ');
+    return `<div class="doubt-done ${d.status}">${ic(d.status === 'ignored' ? 'x' : 'check', 13)}<span class="grow">${what}${d.status === 'ignored' ? ' <span class="muted">(ignorado)</span>' : ''}</span>${extra ? `<span class="muted">${extra}</span>` : ''}</div>`;
+  };
+  return `<div class="doubts">
+    <div class="doubts-head">
+      <span class="dh-ico">${ic('help', 17)}</span>
+      <div class="grow"><b>Pontos de dúvida</b> ${open.length ? `<span class="chip warn">${open.length} ${open.length === 1 ? 'aberto' : 'abertos'}</span>` : `<span class="chip ok">${ic('check', 11)} tudo revisado</span>`}
+        <div class="muted" style="font-size:12.5px;margin-top:2px">O Claude não teve certeza destes trechos. Ouça, corrija — e as próximas reuniões${folder ? ' desta pasta' : ''} já vêm melhores.</div></div>
+    </div>
+    ${changedSince ? `<div class="banner info regen-banner">${ic('sparkles', 16)}<div class="grow">Suas correções ainda não estão no resumo.</div><button class="btn primary sm" id="regenFix">${ic('refresh', 13)} Refazer resumo com as correções</button></div>` : ''}
+    ${open.map(card).join('')}
+    ${done.length ? `<div class="doubts-done">${done.map(doneLine).join('')}</div>` : ''}
+  </div>`;
+}
+
+function bindDoubts() {
+  const box = $('#doubts');
+  if (!box) return;
+  $$('.play-at', box).forEach((b) => (b.onclick = () => playAt(+b.dataset.t)));
+  $$('.doubt', box).forEach((card) => {
+    const did = card.dataset.d;
+    const inp = card.querySelector('[data-in]');
+    const rem = card.querySelector('[data-rem]');
+    inp.oninput = () => { dState[did] = { ...(dState[did] || {}), answer: inp.value }; };
+    if (rem) rem.onchange = () => { dState[did] = { ...(dState[did] || {}), remember: rem.checked }; };
+    const submit = async (action) => {
+      if (action === 'fix' && !inp.value.trim()) { inp.focus(); toast('warn', 'Escreva a correção (ou clique em "Está certo" / "Ignorar").'); return; }
+      $$('button', card).forEach((b) => (b.disabled = true));
+      const r = await api.lib.resolveDoubt(id, did, { action, answer: inp.value, remember: rem ? rem.checked : false });
+      if (!r.ok) { toast('error', r.error); $$('button', card).forEach((b) => (b.disabled = false)); return; }
+      delete dState[did];
+      data.meta = r.meta;
+      if (r.replaced) data.transcript = (await api.lib.get(id))?.transcript || data.transcript;
+      const msg = action === 'ignore' ? 'Ponto ignorado.'
+        : [action === 'fix' ? 'Correção salva' : 'Confirmado', r.replaced ? `${r.replaced}× na transcrição` : '', r.remembered ? (data.meta.folder ? 'lembrado na pasta' : 'lembrado no glossário geral') : ''].filter(Boolean).join(' · ') + '.';
+      toast('success', msg);
+      sig = signature();
+      const el = $('#doubts'); if (el) { el.innerHTML = doubtsHtml(); bindDoubts(); }
+      renderTabs();
+      if (r.remembered) ctx.reloadFolders();
+    };
+    $$('[data-act]', card).forEach((b) => (b.onclick = () => submit(b.dataset.act)));
+    inp.onkeydown = (e) => { if (e.key === 'Enter') submit('fix'); };
+  });
+  const rg = $('#regenFix');
+  if (rg) rg.onclick = () => { api.pipe.process(id, 'summary'); toast('info', 'Gerando o resumo de novo com as suas correções…'); };
 }
 
 // Transcrição

@@ -7,6 +7,7 @@ const { transcribe, UserError } = require('./transcribe');
 const { buildTranscript, transcriptToText, fmtTime } = require('./speakers');
 const { runClaude, readSkill } = require('./claude');
 const { STEP_NAMES } = require('./library');
+const F = require('./folders');
 
 const FALLBACK_FORMAT = `Formato de saída: texto limpo, pronto para colar no Teams (sem Markdown: nada de #, **, - ).
 📋 <NOME DA REUNIÃO EM MAIÚSCULAS>
@@ -24,9 +25,30 @@ const FALLBACK_FORMAT = `Formato de saída: texto limpo, pronto para colar no Te
 ✅ ITENS DE AÇÃO
 ━━━━━━━━━━━━━━━━━━━━
 
-☐ Responsável: ação concreta, com prazo se mencionado.
+☐ Responsável: ação concreta, com prazo se mencionado.`;
 
-(*) Termos com reconhecimento de voz duvidoso: "X" (aparece como "Y"). Inclua só se houver.`;
+// Pedido do bloco estruturado no fim do resumo (dúvidas, contexto e histórico da pasta)
+function blockRules(folder) {
+  const inFolder = !!folder.name;
+  const hasCtx = inFolder && !F.contextIsEmpty(folder.data.context);
+  return `=== BLOCO FINAL OBRIGATÓRIO (o app lê e esconde do texto) ===
+Depois do resumo, termine a resposta com um bloco exatamente neste formato (JSON válido, sem comentários):
+\`\`\`meetrec
+{
+  "duvidas": [
+    {"tipo": "termo|nome|numero|falante|trecho", "tempo": "mm:ss", "ouvido": "texto exatamente como aparece na transcrição", "sugestao": "o que você acha que é (ou vazio)", "pergunta": "pergunta curta e direta ao usuário"}
+  ]${inFolder ? `,
+  "contexto": ${hasCtx ? 'null ou o contexto COMPLETO atualizado, só se esta reunião trouxe informação nova e relevante (pessoa nova, papel, objetivo)' : 'o contexto da pasta deduzido desta reunião'} no formato {"resumo": "do que se trata o projeto/assunto em 1-2 frases", "participantes": [{"nome": "", "papel": "cargo ou função, se der para saber"}], "objetivos": [""], "observacoes": ""},
+  "historico": "o HISTÓRICO DA PASTA atualizado com esta reunião: decisões em vigor e pendências em aberto (com responsável), em bullets com •, no máximo 25 linhas; remova pendências que esta reunião resolveu"` : ''}
+}
+\`\`\`
+Regras das dúvidas:
+- Liste tudo de que você NÃO teve certeza por causa da transcrição: palavras/nomes/siglas que parecem mal reconhecidos, números ou datas ambíguos, falas sem sentido, quem disse algo importante quando não está claro. No máximo 10, as mais importantes primeiro.
+- "ouvido" deve ser copiado literalmente da transcrição (o app usa para localizar e corrigir). Deixe vazio em dúvidas de número/trecho/falante sem palavra específica.
+- Não repita dúvidas já respondidas no glossário ou nos esclarecimentos do usuário.
+- Se não houver dúvidas, use "duvidas": [].
+- Não escreva no texto do resumo nenhuma linha de "termos duvidosos" — as dúvidas vão só no bloco.`;
+}
 
 const SILENT_DB = -55;
 
@@ -89,6 +111,11 @@ class Pipeline extends EventEmitter {
     this._applyPriority();
   }
 
+  // Ao cancelar, a reunião volta ao estado que já tinha (ex.: cancelar "Refazer resumo" mantém o resumo anterior)
+  _statusAfterCancel(id) {
+    return fs.existsSync(this.library.file(id, 'summary.md')) ? 'ready' : 'recorded';
+  }
+
   // Chamado quando uma gravação termina: retoma a fila que estava esperando
   resume() { this._next(); }
 
@@ -111,7 +138,7 @@ class Pipeline extends EventEmitter {
     const qi = this.queue.findIndex((j) => j.id === id);
     if (qi >= 0) {
       this.queue.splice(qi, 1);
-      this.library.update(id, { status: 'recorded', error: null });
+      this.library.update(id, { status: this._statusAfterCancel(id), error: null });
       if (!silent) this.emit('cancelled', { id });
       return true;
     }
@@ -148,7 +175,7 @@ class Pipeline extends EventEmitter {
         // A reunião foi excluída durante o processamento: não há o que reportar
       } else if (this.cancelled || e.code === 'cancelled') {
         if (step) this._step(id, step, { state: 'pending', progress: 0, message: 'Cancelado' }, true);
-        this.library.update(id, { status: 'recorded', error: null });
+        this.library.update(id, { status: this._statusAfterCancel(id), error: null });
         this.emit('cancelled', { id });
       } else {
         const msg = e instanceof UserError ? e.message : `Erro inesperado: ${e.message}`;
@@ -220,7 +247,10 @@ class Pipeline extends EventEmitter {
   // 2) Transcreve cada faixa com voz
   async _transcribe(id) {
     const meta = this.library.get(id);
-    const settings = this.store.get();
+    const { data, general } = this.folderInfo(id);
+    const base = this.store.get();
+    // Camada 1: termos confirmados (glossário geral + da pasta) e participantes viram vocabulário do Whisper
+    const settings = { ...base, vocabulary: F.buildVocabulary(base.vocabulary, [data?.glossary || [], general.glossary], data?.context) };
     const info = meta.trackInfo || {};
     let jobs;
     if (meta.tracks.mic || meta.tracks.system) {
@@ -270,7 +300,12 @@ class Pipeline extends EventEmitter {
     const events = (this.library.readText(id, 'events.jsonl') || '').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
     this._step(id, 'speakers', { message: events.length ? `Cruzando ${events.length} eventos da extensão…` : 'Separando sua voz dos participantes…', progress: 0.3 });
     const settings = this.store.get();
-    const { segments, stats, participants } = buildTranscript({ mic: raw.mic, sys: raw.system, mix: raw.mix, events, userName: settings.userName });
+    const built = buildTranscript({ mic: raw.mic, sys: raw.system, mix: raw.mix, events, userName: settings.userName });
+    const { stats, participants } = built;
+    // Camada 2: só correções que você confirmou (nesta reunião ou no glossário)
+    const { data, general } = this.folderInfo(id);
+    const fixed = F.applyCorrections(built.segments, F.correctionPairs([...(data?.glossary || []), ...general.glossary], meta.corrections));
+    const segments = fixed.segments;
     this.library.writeJson(id, 'transcript.json', { segments });
     this.library.writeText(id, 'transcript.txt', transcriptToText(segments, meta.speakerNames));
 
@@ -282,6 +317,7 @@ class Pipeline extends EventEmitter {
     if (stats.named) parts.push(`${stats.named} falas identificadas por nome`);
     else if (meta.tracks.mic && meta.tracks.system) parts.push('sua voz separada dos participantes');
     if (stats.echoRemoved) parts.push(`${stats.echoRemoved} ecos removidos`);
+    if (fixed.count) parts.push(`${fixed.count} ${fixed.count === 1 ? 'termo corrigido' : 'termos corrigidos'} pelo glossário`);
     if (!events.length && meta.platform === 'Teams (navegador)') parts.push('ative as legendas no Teams para nomes');
     return { message: parts.join(' · ') || 'Transcrição montada' };
   }
@@ -303,12 +339,34 @@ class Pipeline extends EventEmitter {
     if (people.length) lines.push(`Participantes identificados: ${people.join(', ')}`);
     if (meta.markers?.length) lines.push('Momentos marcados como importantes pelo usuário:\n' + meta.markers.map((m) => `- [${fmtTime(m.t)}] ${m.label || 'Marcação'}`).join('\n'));
     if (meta.notes?.trim()) lines.push('Anotações do usuário durante a reunião:\n' + meta.notes.trim());
-    return { meta, settings, header: lines.join('\n'), text };
+    return { meta, settings, header: lines.join('\n'), text, folder: this.folderPrompt(id) };
+  }
+
+  folderInfo(id) {
+    const name = this.library.folderOf(id);
+    return { name, data: name ? this.library.getFolder(name) : null, general: this.library.getFolder('') || F.emptyFolderData() };
+  }
+
+  // Seções do prompt com o que o app já sabe sobre a pasta e sobre esta reunião
+  folderPrompt(id) {
+    const { name, data, general } = this.folderInfo(id);
+    const meta = this.library.get(id);
+    const out = [];
+    if (name) {
+      const ctx = [data.description && `Descrição: ${data.description}`, F.contextToText(data.context)].filter(Boolean).join('\n');
+      out.push(`=== CONTEXTO DA PASTA "${name}" (confirmado pelo usuário) ===\n${ctx || '(ainda sem contexto — esta é uma das primeiras reuniões da pasta)'}`);
+      if (data.history) out.push(`=== HISTÓRICO DA PASTA (reuniões anteriores) ===\n${data.history}`);
+    }
+    const gloss = F.glossaryToText([...(data?.glossary || []), ...general.glossary]);
+    if (gloss) out.push(`=== GLOSSÁRIO (grafias confirmadas pelo usuário — use sempre estas) ===\n${gloss}`);
+    const cl = (meta?.clarifications || []).map((c) => `- ${c.question}${c.heard ? ` (transcrição: "${c.heard}")` : ''} → ${c.answer}`).join('\n');
+    if (cl) out.push(`=== ESCLARECIMENTOS DO USUÁRIO SOBRE ESTA REUNIÃO (têm prioridade sobre a transcrição) ===\n${cl}`);
+    return { name, data, text: out.join('\n\n') };
   }
 
   // 4) Gera o resumo com o Claude Code
   async _summary(id) {
-    const { meta, settings, header, text } = this.buildContext(id);
+    const { meta, settings, header, text, folder } = this.buildContext(id);
     const skill = settings.useSkill ? readSkill() : null;
     const owner = settings.userName || 'Você';
     const speakerRule = (meta.tracks?.mic || meta.tracks?.system)
@@ -320,12 +378,14 @@ class Pipeline extends EventEmitter {
 ${skill || FALLBACK_FORMAT}
 
 === REGRAS DESTA EXECUÇÃO (têm prioridade) ===
-- Não use ferramentas, não leia nem salve arquivos: responda SOMENTE com o texto final do resumo, começando pela linha "📋".
+- Não use ferramentas, não leia nem salve arquivos: responda SOMENTE com o texto final do resumo, começando pela linha "📋", seguido do bloco final descrito abaixo.
 - A transcrição já está abaixo, com horários [mm:ss] e quem falou.
 ${speakerRule}
 - Dê atenção especial aos momentos marcados e às anotações do usuário, quando houver.
-${settings.customInstructions ? `- Instruções adicionais do usuário: ${settings.customInstructions}\n` : ''}
-=== DADOS DA REUNIÃO ===
+${folder.text ? '- Use o contexto, o histórico, o glossário e os esclarecimentos abaixo para entender a reunião, corrigir erros de reconhecimento de voz e escrever nomes e termos com a grafia certa. Se fizer sentido, ligue o que foi dito a pendências do histórico.\n' : ''}${settings.customInstructions ? `- Instruções adicionais do usuário: ${settings.customInstructions}\n` : ''}
+${blockRules(folder)}
+
+${folder.text ? `${folder.text}\n\n` : ''}=== DADOS DA REUNIÃO ===
 ${header}
 
 === TRANSCRIÇÃO ===
@@ -343,30 +403,91 @@ ${text}
         const now = Date.now();
         if (now - lastEmit > 120) {
           lastEmit = now;
-          this.emit('summary-stream', { id, text: full });
-          this._step(id, 'summary', { progress: Math.min(0.95, full.length / 2500) });
+          const visible = F.visiblePart(full);
+          this.emit('summary-stream', { id, text: visible });
+          if (visible.length < full.length) this._step(id, 'summary', { message: 'Anotando os pontos de dúvida e atualizando a pasta…' });
+          this._step(id, 'summary', { progress: Math.min(0.95, full.length / 3200) });
         }
       },
     });
-    this.emit('summary-stream', { id, text: res.text });
-    if (!res.text) throw new UserError('O Claude retornou uma resposta vazia.');
-    this.library.writeText(id, 'summary.md', res.text);
-    const { title, actions } = parseSummary(res.text);
-    const patch = { summary: { generatedAt: new Date().toISOString(), model: res.model, costUsd: res.costUsd, durationMs: res.durationMs }, actions };
+    const parsed = F.splitSummary(res.text);
+    const summaryText = parsed.summary;
+    this.emit('summary-stream', { id, text: summaryText });
+    if (!summaryText) throw new UserError('O Claude retornou uma resposta vazia.');
+    this.library.writeText(id, 'summary.md', summaryText);
+    const { title, actions } = parseSummary(summaryText);
+    const doubts = F.normalizeDoubts(parsed.data?.duvidas);
+    const patch = { summary: { generatedAt: new Date().toISOString(), model: res.model, costUsd: res.costUsd, durationMs: res.durationMs, blockError: parsed.error || (parsed.data ? null : 'sem bloco') }, actions, doubts };
     if (title && this.library.get(id).titleAuto) patch.title = title;
-    this.library.update(id, patch);
+    const m = this.library.update(id, patch);
+    const folderNote = folder.name ? this._applyFolderBlock(folder.name, parsed.data, m) : '';
     const secs = res.durationMs ? ` em ${Math.round(res.durationMs / 1000)}s` : '';
-    return { message: `Resumo gerado${secs}${actions.length ? ` · ${actions.length} itens de ação` : ''}` };
+    const bits = [`Resumo gerado${secs}`];
+    if (actions.length) bits.push(`${actions.length} itens de ação`);
+    if (doubts.length) bits.push(`${doubts.length} ${doubts.length === 1 ? 'ponto de dúvida' : 'pontos de dúvida'}`);
+    if (folderNote) bits.push(folderNote);
+    return { message: bits.join(' · ') };
+  }
+
+  // Guarda o histórico na hora e o contexto como rascunho para você aprovar
+  _applyFolderBlock(name, data, meta) {
+    if (!data || !this.library.getFolder(name)) return '';
+    const notes = [];
+    this.library.updateFolder(name, (d) => {
+      if (typeof data.historico === 'string' && data.historico.trim()) {
+        d.history = data.historico.trim();
+        d.historyAt = new Date().toISOString();
+        notes.push('histórico da pasta atualizado');
+      }
+      if (data.contexto && typeof data.contexto === 'object') {
+        const c = F.normalizeContext(data.contexto);
+        if (!F.contextIsEmpty(c)) {
+          d.draft = { ...c, fromMeeting: meta.id, fromTitle: meta.title, at: new Date().toISOString(), kind: F.contextIsEmpty(d.context) ? 'new' : 'update' };
+          notes.push(d.draft.kind === 'new' ? 'contexto da pasta montado (aguardando sua aprovação)' : 'sugestão de atualização do contexto');
+        }
+      }
+      return d;
+    });
+    if (notes.some((n) => n.includes('contexto'))) this.emit('folder-draft', { name, id: meta.id, kind: this.library.getFolder(name).draft?.kind });
+    return notes.join(' · ');
+  }
+
+  // Monta contexto + histórico de uma pasta a partir dos resumos que ela já tem
+  async bootstrapFolder(name, onStatus) {
+    const folder = this.library.getFolder(name);
+    if (!name || !folder) throw new UserError('Pasta não encontrada.');
+    const metas = this.library.list().filter((m) => m.folder === name && this.library.readText(m.id, 'summary.md')).slice(0, 12).reverse();
+    if (!metas.length) throw new UserError('Esta pasta ainda não tem reuniões com resumo.');
+    const settings = this.store.get();
+    const docs = metas.map((m) => `--- ${m.title} (${new Date(m.createdAt).toLocaleDateString('pt-BR')}) ---\n${(this.library.readText(m.id, 'summary.md') || '').slice(0, 4000)}`).join('\n\n');
+    const prompt = `Você vai montar a memória de uma pasta de reuniões do app MeetRec a partir dos resumos abaixo (em ordem cronológica).
+Não use ferramentas. Responda SOMENTE com um bloco neste formato (JSON válido):
+\`\`\`meetrec
+{"contexto": {"resumo": "do que se trata o projeto/assunto em 1-2 frases", "participantes": [{"nome": "", "papel": ""}], "objetivos": [""], "observacoes": ""},
+ "historico": "decisões em vigor e pendências em aberto (com responsável), em bullets com •, no máximo 25 linhas"}
+\`\`\`
+
+=== PASTA "${name}" ===
+${folder.description ? `Descrição dada pelo usuário: ${folder.description}\n` : ''}${F.contextToText(folder.context) ? `Contexto atual:\n${F.contextToText(folder.context)}\n` : ''}
+=== RESUMOS ===
+${docs}`;
+    onStatus?.(`Lendo ${metas.length} ${metas.length === 1 ? 'resumo' : 'resumos'}…`);
+    const res = await runClaude({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
+    const parsed = F.splitSummary(res.text.includes('```meetrec') ? res.text : '```meetrec\n' + res.text);
+    if (!parsed.data) throw new UserError('O Claude não devolveu o contexto no formato esperado. Tente de novo.');
+    const last = metas[metas.length - 1];
+    const note = this._applyFolderBlock(name, parsed.data, { id: last.id, title: `${metas.length} ${metas.length === 1 ? 'reunião' : 'reuniões'} da pasta` });
+    return { message: note || 'Nada novo para acrescentar.' };
   }
 
   // Pergunta livre ao Claude sobre a reunião
   async ask(id, question, onText) {
-    const { meta, settings, header, text } = this.buildContext(id);
+    const { meta, settings, header, text, folder } = this.buildContext(id);
     const summary = this.library.readText(id, 'summary.md') || '';
     const history = (meta.chat || []).slice(-10).map((c) => `${c.role === 'user' ? 'Usuário' : 'Assistente'}: ${c.text}`).join('\n\n');
     const prompt = `Você é um assistente que responde perguntas sobre uma reunião gravada. Responda em português, de forma direta e objetiva, citando horários [mm:ss] da transcrição quando útil. Não use ferramentas. Use texto simples (listas com • são ok).
 
-=== DADOS DA REUNIÃO ===
+${folder.text ? `${folder.text}\n\n` : ''}=== DADOS DA REUNIÃO ===
 ${header}
 
 ${summary ? `=== RESUMO ===\n${summary}\n\n` : ''}=== TRANSCRIÇÃO ===
@@ -386,4 +507,4 @@ ${question}`;
   }
 }
 
-module.exports = { Pipeline, parseSummary };
+module.exports = { Pipeline, parseSummary, blockRules };

@@ -1,8 +1,11 @@
 // Biblioteca de gravações: uma pasta por reunião com meta.json, áudios, transcrição e resumo.
+// As reuniões podem ficar na raiz ("Sem pasta") ou dentro de pastas criadas pelo usuário,
+// cada uma com _contexto/ (pasta.json + CONTEXTO.md, GLOSSARIO.md e HISTORICO.md).
 const fs = require('fs');
 const path = require('path');
 const { shell } = require('electron');
 const { EventEmitter } = require('events');
+const F = require('./folders');
 
 const STEP_NAMES = ['audio', 'transcribe', 'speakers', 'summary'];
 
@@ -23,6 +26,7 @@ class Library extends EventEmitter {
     super();
     this.store = store;
     this.cache = new Map();
+    this.folders = new Map(); // nome -> dados da pasta ('' = raiz, só glossário geral)
     this.root = store.get('storageDir');
     fs.mkdirSync(this.root, { recursive: true });
     this.load();
@@ -38,21 +42,32 @@ class Library extends EventEmitter {
 
   load() {
     this.cache.clear();
-    let entries = [];
-    try { entries = fs.readdirSync(this.root, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const f = path.join(this.root, e.name, 'meta.json');
-      try {
-        const meta = JSON.parse(fs.readFileSync(f, 'utf8'));
-        meta.id = e.name;
-        this.cache.set(e.name, meta);
-      } catch { /* pasta sem meta: ignora */ }
-    }
+    this.folders.clear();
+    this.folders.set('', this._readFolder(''));
+    const scan = (dir, folder) => {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (!e.isDirectory() || e.name === F.CTX_DIR || e.name.startsWith('.')) continue;
+        let meta = null;
+        try { meta = JSON.parse(fs.readFileSync(path.join(dir, e.name, 'meta.json'), 'utf8')); } catch {}
+        if (meta) {
+          meta.id = e.name;
+          meta.folder = folder;
+          if (!this.cache.has(e.name)) this.cache.set(e.name, meta);
+        } else if (!folder && !F.MEETING_DIR.test(e.name) && !e.name.startsWith('_')) {
+          // Subpasta da raiz sem meta.json = pasta do usuário (só um nível)
+          this.folders.set(e.name, this._readFolder(e.name));
+          scan(path.join(dir, e.name), e.name);
+        }
+      }
+    };
+    scan(this.root, '');
   }
 
-  dir(id) { return path.join(this.root, id); }
-  file(id, name) { return path.join(this.root, id, name); }
+  dir(id) { return path.join(this.root, this.cache.get(id)?.folder || '', id); }
+  file(id, name) { return path.join(this.dir(id), name); }
+  folderOf(id) { return this.cache.get(id)?.folder || ''; }
 
   list() {
     return [...this.cache.values()].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -62,10 +77,12 @@ class Library extends EventEmitter {
 
   create(fields = {}) {
     const now = new Date();
+    const folder = fields.folder && this.folders.has(fields.folder) ? fields.folder : '';
+    const base = this.folderDir(folder);
     let id = newId(now);
     let i = 1;
-    while (fs.existsSync(this.dir(id))) id = `${newId(now)}-${i++}`;
-    fs.mkdirSync(this.dir(id), { recursive: true });
+    while (this.cache.has(id) || fs.existsSync(path.join(base, id))) id = `${newId(now)}-${i++}`;
+    fs.mkdirSync(path.join(base, id), { recursive: true });
     const hh = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
     const meta = {
       id,
@@ -90,6 +107,7 @@ class Library extends EventEmitter {
       warnings: [],
       error: null,
       ...fields,
+      folder,
     };
     this._write(meta);
     return meta;
@@ -125,7 +143,8 @@ class Library extends EventEmitter {
     this.cache.set(meta.id, meta);
     const f = this.file(meta.id, 'meta.json');
     const tmp = f + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
+    const { folder, ...disk } = meta; // a pasta é definida pelo local no disco
+    fs.writeFileSync(tmp, JSON.stringify(disk, null, 2));
     fs.renameSync(tmp, f);
     this.emit('changed', meta);
   }
@@ -161,6 +180,109 @@ class Library extends EventEmitter {
     this.emit('changed', { id, removed: true });
   }
 
+  // ───────── Pastas ─────────
+  folderDir(name) { return path.join(this.root, name || ''); }
+  ctxDir(name) { return path.join(this.folderDir(name), F.CTX_DIR); }
+
+  _readFolder(name) {
+    try { return F.normalizeFolderData(JSON.parse(fs.readFileSync(path.join(this.ctxDir(name), 'pasta.json'), 'utf8'))); } catch { return F.emptyFolderData(); }
+  }
+
+  _writeFolder(name, data) {
+    const dir = this.ctxDir(name);
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, 'pasta.json');
+    fs.writeFileSync(f + '.tmp', JSON.stringify(data, null, 2));
+    fs.renameSync(f + '.tmp', f);
+    // Espelhos legíveis (para você ou para o Claude Code abrirem direto na pasta)
+    try {
+      fs.writeFileSync(path.join(dir, 'GLOSSARIO.md'), F.renderGlossaryMd(name, data));
+      if (name) {
+        fs.writeFileSync(path.join(dir, 'CONTEXTO.md'), F.renderContextMd(name, data));
+        fs.writeFileSync(path.join(dir, 'HISTORICO.md'), F.renderHistoryMd(name, data));
+      }
+    } catch { /* os .md são só espelho */ }
+    this.folders.set(name, data);
+    this.emit('folders', { name });
+  }
+
+  getFolder(name) { return this.folders.get(name || '') || null; }
+
+  updateFolder(name, patch) {
+    const cur = this.getFolder(name);
+    if (!cur) throw new Error('Pasta não encontrada.');
+    const next = typeof patch === 'function' ? patch({ ...cur }) || cur : { ...cur, ...patch };
+    this._writeFolder(name || '', next);
+    return next;
+  }
+
+  listFolders() {
+    const counts = {};
+    for (const m of this.cache.values()) counts[m.folder || ''] = (counts[m.folder || ''] || 0) + 1;
+    return [...this.folders.entries()].filter(([n]) => n).map(([name, d]) => ({
+      name,
+      count: counts[name] || 0,
+      description: d.description,
+      hasContext: !F.contextIsEmpty(d.context),
+      hasDraft: !!d.draft,
+      glossary: d.glossary.length,
+      hasHistory: !!d.history,
+    })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }
+
+  _folderExists(name) {
+    return [...this.folders.keys()].some((n) => n && n.toLowerCase() === name.toLowerCase()) || fs.existsSync(this.folderDir(name));
+  }
+
+  createFolder(raw, description = '') {
+    const { name, error } = F.sanitizeFolderName(raw);
+    if (error) throw new Error(error);
+    if (this._folderExists(name)) throw new Error(`Já existe uma pasta chamada "${name}".`);
+    fs.mkdirSync(this.folderDir(name), { recursive: true });
+    this._writeFolder(name, { ...F.emptyFolderData(), description: String(description || '').trim() });
+    return name;
+  }
+
+  async renameFolder(oldName, raw) {
+    if (!oldName || !this.folders.has(oldName)) throw new Error('Pasta não encontrada.');
+    const { name, error } = F.sanitizeFolderName(raw);
+    if (error) throw new Error(error);
+    if (name === oldName) return name;
+    if (name.toLowerCase() !== oldName.toLowerCase() && this._folderExists(name)) throw new Error(`Já existe uma pasta chamada "${name}".`);
+    await renameRetry(this.folderDir(oldName), this.folderDir(name));
+    const data = this.folders.get(oldName);
+    this.folders.delete(oldName);
+    for (const m of this.cache.values()) if (m.folder === oldName) m.folder = name;
+    this._writeFolder(name, data); // atualiza os títulos dos .md
+    this.emit('changed', null);
+    return name;
+  }
+
+  // Exclui a pasta: as reuniões voltam para "Sem pasta" e o contexto vai para a lixeira
+  async removeFolder(name) {
+    if (!name || !this.folders.has(name)) throw new Error('Pasta não encontrada.');
+    for (const m of [...this.cache.values()]) if (m.folder === name) await this.move(m.id, '');
+    const d = this.folderDir(name);
+    try { await shell.trashItem(d); } catch { fs.rmSync(d, { recursive: true, force: true }); }
+    this.folders.delete(name);
+    this.emit('folders', { name, removed: true });
+    this.emit('changed', null);
+  }
+
+  async move(id, folder) {
+    const meta = this.get(id);
+    if (!meta) throw new Error('Reunião não encontrada.');
+    folder = folder || '';
+    if (folder && !this.folders.has(folder)) throw new Error('Pasta não encontrada.');
+    if ((meta.folder || '') === folder) return meta;
+    const to = path.join(this.folderDir(folder), id);
+    if (fs.existsSync(to)) throw new Error('Já existe uma reunião com o mesmo identificador na pasta de destino.');
+    await renameRetry(this.dir(id), to);
+    meta.folder = folder;
+    this.emit('changed', meta);
+    return meta;
+  }
+
   search(q) {
     q = (q || '').toLowerCase().trim();
     if (!q) return this.list().map((m) => m.id);
@@ -188,6 +310,22 @@ class Library extends EventEmitter {
     }
     return out;
   }
+}
+
+// No Windows, renomear falha enquanto algum arquivo da pasta está aberto (player, antivírus, indexador)
+async function renameRetry(from, to) {
+  const busy = (e) => ['EPERM', 'EBUSY', 'EACCES'].includes(e?.code);
+  let last;
+  for (let i = 0; i < 6; i++) {
+    try { fs.renameSync(from, to); return; } catch (e) {
+      last = e;
+      if (!busy(e)) break;
+      await new Promise((r) => setTimeout(r, 300 + i * 200));
+    }
+  }
+  throw new Error(busy(last)
+    ? 'Algum arquivo está em uso (áudio tocando ou aberto em outro programa). Feche-o e tente de novo.'
+    : `Não consegui mover: ${last?.message}`);
 }
 
 module.exports = { Library, STEP_NAMES };

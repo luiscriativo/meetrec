@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('api', {
     exportItem: inv('lib:export'),
     importFile: inv('lib:import'),
     mediaUrl: inv('lib:mediaUrl'),
+    move: inv('lib:move'),
+    resolveDoubt: inv('lib:resolveDoubt'),
   },
 
   pipe: {
@@ -47,6 +49,20 @@ contextBridge.exposeInMainWorld('api', {
     cancel: inv('pipe:cancel'),
     status: inv('pipe:status'),
     ask: inv('pipe:ask'),
+  },
+
+  folders: {
+    list: inv('folder:list'),
+    get: inv('folder:get'),
+    create: inv('folder:create'),
+    rename: inv('folder:rename'),
+    remove: inv('folder:delete'),
+    update: inv('folder:update'),
+    addTerm: inv('folder:addTerm'),
+    approveDraft: inv('folder:approveDraft'),
+    discardDraft: inv('folder:discardDraft'),
+    bootstrap: inv('folder:bootstrap'),
+    open: inv('folder:open'),
   },
 
   diag: { run: inv('diag:run'), action: inv('diag:action') },

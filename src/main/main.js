@@ -16,7 +16,8 @@ const { Updater } = require('./updater');
 const { runChecks, installWhisper, downloadModel } = require('./diagnostics');
 const { runClaude } = require('./claude');
 const { ffmpegPath, run, resourcePath } = require('./tools');
-const { fmtTime } = require('./speakers');
+const { fmtTime, transcriptToText } = require('./speakers');
+const F = require('./folders');
 
 const isMac = process.platform === 'darwin';
 const ROOT = path.join(__dirname, '..', '..');
@@ -278,7 +279,7 @@ async function startRecording(opts = {}) {
   const s = store.get();
   const st = bridge.status();
   const platform = opts.platform || (st.inCall ? st.platform : null) || (detector.apps.find((a) => !/Chrome|Edge|Firefox|Brave|Opera|Vivaldi|Arc/.test(a)) || null);
-  const meta = library.create({ platform, meetingTitle: opts.title || (st.inCall ? st.meetingTitle : null), participants: st.inCall ? st.participants : [] });
+  const meta = library.create({ folder: targetFolder(opts.folder), platform, meetingTitle: opts.title || (st.inCall ? st.meetingTitle : null), participants: st.inCall ? st.participants : [] });
   if (opts.title || (st.inCall && st.meetingTitle)) library.update(meta.id, { title: opts.title || st.meetingTitle });
 
   rec.streams = {};
@@ -436,8 +437,91 @@ function registerShortcuts() {
   return fails;
 }
 
+// Pasta onde a próxima gravação/importação é salva (a escolhida em "Salvar em")
+function targetFolder(explicit) {
+  const f = explicit !== undefined && explicit !== null ? explicit : store.get('recordFolder');
+  return f && library.getFolder(f) ? f : '';
+}
+
+// ───────────────────────── Pastas e pontos de dúvida ─────────────────────────
+function folderBusy(name) {
+  return library.list().some((m) => m.folder === name && (pipeline.isBusy(m.id) || rec.id === m.id));
+}
+
+const hasSummary = (m) => fs.existsSync(library.file(m.id, 'summary.md'));
+
+function folderPayload(name) {
+  const d = library.getFolder(name);
+  if (!d) return null;
+  const meetings = library.list().filter((m) => (m.folder || '') === (name || ''));
+  return { name: name || '', ...d, dir: library.folderDir(name), count: meetings.length, summarized: meetings.filter(hasSummary).length };
+}
+
+async function moveMeeting(id, folder) {
+  if (rec.id === id) throw new Error('Pare a gravação antes de mover esta reunião.');
+  if (pipeline.isBusy(id)) throw new Error('Aguarde o processamento desta reunião terminar para movê-la.');
+  const before = library.get(id)?.folder || '';
+  const m = await library.move(id, folder);
+  const dest = folder ? `"${folder}"` : '"Sem pasta"';
+  const d = folder ? library.getFolder(folder) : null;
+  const offerBootstrap = folder && F.contextIsEmpty(d?.context) && !d?.draft && hasSummary(m);
+  if (before !== (folder || '')) {
+    toast('success', `Reunião movida para ${dest}.`, offerBootstrap
+      ? { duration: 9000, action: { label: 'Montar contexto da pasta', route: { view: 'folder', name: folder, bootstrap: true } } }
+      : {});
+  }
+  return m;
+}
+
+// Aplica a sua resposta a um ponto de dúvida: corrige a transcrição, guarda o esclarecimento
+// para o próximo resumo e (se pedido) lembra o termo no glossário da pasta.
+function resolveDoubt(id, doubtId, { action, answer, remember }) {
+  const meta = library.get(id);
+  const d = meta?.doubts?.find((x) => x.id === doubtId);
+  if (!d) throw new Error('Ponto de dúvida não encontrado.');
+  answer = String(answer || '').trim();
+  const folder = meta.folder || '';
+  let replaced = 0, remembered = false;
+  const clarify = (text) => library.update(id, (m) => {
+    m.clarifications = [...(m.clarifications || []).filter((c) => c.doubtId !== doubtId), { doubtId, question: d.question, heard: d.heard, answer: text, t: d.t }];
+    return m;
+  });
+
+  if (action === 'fix') {
+    if (!answer) throw new Error('Escreva a correção.');
+    // Só troca na transcrição em dúvidas de termo/nome e quando a resposta é a grafia certa (curta), não uma explicação
+    const isSpelling = (d.kind === 'termo' || d.kind === 'nome') && d.heard && answer !== d.heard && !/\n/.test(answer) && answer.length <= Math.max(40, d.heard.length * 3);
+    if (isSpelling) {
+      const tr = library.readJson(id, 'transcript.json');
+      if (tr?.segments) {
+        const r = F.applyCorrections(tr.segments, [{ from: d.heard, to: answer }]);
+        replaced = r.count;
+        if (r.count) {
+          library.writeJson(id, 'transcript.json', { ...tr, segments: r.segments });
+          library.writeText(id, 'transcript.txt', transcriptToText(r.segments, meta.speakerNames));
+        }
+      }
+      library.update(id, (m) => { m.corrections = [...(m.corrections || []).filter((c) => c.heard !== d.heard), { heard: d.heard, answer }]; return m; });
+      if (remember) { library.updateFolder(folder, (f) => ({ ...f, glossary: F.addGlossaryTerm(f.glossary, { term: answer, heard: d.heard }) })); remembered = true; }
+    } else if (remember && (d.kind === 'nome' || d.kind === 'termo') && answer.length <= 40 && !/\n/.test(answer)) {
+      library.updateFolder(folder, (f) => ({ ...f, glossary: F.addGlossaryTerm(f.glossary, { term: answer }) }));
+      remembered = true;
+    }
+    clarify(answer);
+  } else if (action === 'ok') {
+    clarify(d.heard ? `"${d.heard}" está correto` : 'está correto como foi transcrito');
+    if (remember && (d.kind === 'termo' || d.kind === 'nome') && d.heard && d.heard.length <= 40) { library.updateFolder(folder, (f) => ({ ...f, glossary: F.addGlossaryTerm(f.glossary, { term: d.heard }) })); remembered = true; }
+  } else if (action !== 'ignore') throw new Error('Ação inválida.');
+
+  const updated = library.update(id, (m) => {
+    m.doubts = (m.doubts || []).map((x) => (x.id === doubtId ? { ...x, status: action === 'fix' ? 'fixed' : action, answer: action === 'fix' ? answer : undefined, replaced, remembered, resolvedAt: new Date().toISOString() } : x));
+    return m;
+  });
+  return { meta: updated, replaced, remembered };
+}
+
 // ───────────────────────── Importação / exportação ─────────────────────────
-async function importAudio(filePath) {
+async function importAudio(filePath, folder) {
   if (!filePath) {
     const r = await dialog.showOpenDialog(mainWin && mainWin.isVisible() ? mainWin : undefined, {
       title: 'Importar áudio ou vídeo de reunião',
@@ -448,7 +532,7 @@ async function importAudio(filePath) {
     filePath = r.filePaths[0];
   }
   const name = path.basename(filePath, path.extname(filePath));
-  const meta = library.create({ source: 'import', status: 'processing', title: name, titleAuto: true, originalFile: 'original' + path.extname(filePath).toLowerCase() });
+  const meta = library.create({ folder: targetFolder(folder), source: 'import', status: 'processing', title: name, titleAuto: true, originalFile: 'original' + path.extname(filePath).toLowerCase() });
   try { fs.copyFileSync(filePath, library.file(meta.id, meta.originalFile)); } catch (e) {
     library.update(meta.id, { status: 'error', error: `Falha ao copiar: ${e.message}` });
     toast('error', `Não consegui importar: ${e.message}`);
@@ -619,11 +703,13 @@ function setupIpc() {
     };
   });
   ipcMain.handle('lib:update', (_e, id, patch) => {
+    patch = { ...patch };
+    delete patch.folder; // mudar de pasta só por lib:move (move os arquivos)
     if (patch.title) patch.titleAuto = false;
     const m = library.update(id, patch);
     if (patch.speakerNames) {
       const tr = library.readJson(id, 'transcript.json');
-      if (tr) library.writeText(id, 'transcript.txt', require('./speakers').transcriptToText(tr.segments, m.speakerNames));
+      if (tr) library.writeText(id, 'transcript.txt', transcriptToText(tr.segments, m.speakerNames));
     }
     return m;
   });
@@ -638,7 +724,62 @@ function setupIpc() {
   ipcMain.handle('lib:search', (_e, q) => library.search(q));
   ipcMain.handle('lib:openFolder', (_e, id) => shell.openPath(id ? library.dir(id) : library.root));
   ipcMain.handle('lib:export', (_e, id, kind) => exportItem(id, kind));
-  ipcMain.handle('lib:import', (_e, p) => importAudio(p));
+  ipcMain.handle('lib:import', (_e, p, folder) => importAudio(p, folder));
+  ipcMain.handle('lib:move', async (_e, id, folder) => {
+    try { await moveMeeting(id, folder); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('lib:resolveDoubt', (_e, id, doubtId, opts) => {
+    try { return { ok: true, ...resolveDoubt(id, doubtId, opts || {}) }; } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // Pastas
+  const wrap = (fn) => async (...a) => { try { return { ok: true, ...(await fn(...a)) }; } catch (e) { return { ok: false, error: e.message }; } };
+  ipcMain.handle('folder:list', () => library.listFolders());
+  ipcMain.handle('folder:get', (_e, name) => folderPayload(name));
+  ipcMain.handle('folder:create', wrap((_e, name, description) => ({ name: library.createFolder(name, description) })));
+  ipcMain.handle('folder:rename', wrap(async (_e, oldName, newName) => {
+    if (folderBusy(oldName)) throw new Error('Há uma reunião desta pasta gravando ou sendo processada. Aguarde terminar para renomear.');
+    const name = await library.renameFolder(oldName, newName);
+    if (store.get('recordFolder') === oldName) store.set({ recordFolder: name });
+    return { name };
+  }));
+  ipcMain.handle('folder:delete', wrap(async (_e, name) => {
+    if (folderBusy(name)) throw new Error('Há uma reunião desta pasta gravando ou sendo processada. Aguarde terminar para excluir.');
+    await library.removeFolder(name);
+    if (store.get('recordFolder') === name) store.set({ recordFolder: '' });
+    return {};
+  }));
+  ipcMain.handle('folder:update', wrap((_e, name, patch) => {
+    // Só os campos que a tela edita; o resto (rascunho, histórico) passa pelas ações próprias
+    const p = {};
+    if (patch.description !== undefined) p.description = String(patch.description).trim();
+    if (patch.context !== undefined) { p.context = F.normalizeContext(patch.context); p.contextAt = new Date().toISOString(); }
+    if (patch.history !== undefined) { p.history = String(patch.history).trim(); p.historyAt = new Date().toISOString(); }
+    if (patch.glossary !== undefined) p.glossary = F.normalizeFolderData({ glossary: patch.glossary }).glossary;
+    library.updateFolder(name, p);
+    return {};
+  }));
+  ipcMain.handle('folder:addTerm', wrap((_e, name, term, heard) => {
+    if (!String(term || '').trim()) throw new Error('Escreva o termo.');
+    library.updateFolder(name, (f) => ({ ...f, glossary: F.addGlossaryTerm(f.glossary, { term, heard }) }));
+    return {};
+  }));
+  ipcMain.handle('folder:approveDraft', wrap((_e, name, edited) => {
+    const f = library.getFolder(name);
+    if (!f?.draft && !edited) throw new Error('Não há sugestão para aprovar.');
+    library.updateFolder(name, { context: F.normalizeContext(edited || f.draft), contextAt: new Date().toISOString(), draft: null });
+    return {};
+  }));
+  ipcMain.handle('folder:discardDraft', wrap((_e, name) => { library.updateFolder(name, { draft: null }); return {}; }));
+  ipcMain.handle('folder:bootstrap', wrap(async (e, name) => {
+    const r = await pipeline.bootstrapFolder(name, (m) => e.sender.send('evt', { type: 'folder-status', payload: { name, message: m } }));
+    return r;
+  }));
+  ipcMain.handle('folder:open', (_e, name) => {
+    const d = library.ctxDir(name);
+    fs.mkdirSync(d, { recursive: true });
+    return shell.openPath(name ? library.folderDir(name) : d);
+  });
   ipcMain.handle('lib:mediaUrl', (_e, id) => {
     const m = library.get(id);
     return m?.audioFile ? `meetrec-media://rec/${encodeURIComponent(id)}/${encodeURIComponent(m.audioFile)}` : null;
@@ -804,6 +945,11 @@ app.whenReady().then(async () => {
 
   // Eventos
   library.on('changed', (m) => { send('library', m ? { id: m.id, removed: m.removed } : null); updateTrayThrottled(); });
+  library.on('folders', (p) => send('folders', p));
+  pipeline.on('folder-draft', ({ name, kind }) => {
+    toast('info', kind === 'new' ? `Montei o contexto da pasta "${name}" a partir da reunião. Confere?` : `O Claude sugeriu atualizar o contexto da pasta "${name}".`,
+      { duration: 12000, action: { label: 'Conferir', route: { view: 'folder', name } } });
+  });
   pipeline.on('progress', (p) => { send('pipeline', p); updateTrayThrottled(); });
   pipeline.on('summary-stream', (p) => send('summary-stream', p));
   pipeline.on('start', ({ id }) => { send('pipeline-start', { id }); updateTray(); });
