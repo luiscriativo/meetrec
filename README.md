@@ -213,7 +213,7 @@ Pelo popup da extensão também dá para **iniciar/parar a gravação** e **marc
 
 O MeetRec mantém uma cópia da extensão em **Documentos/MeetRec - Extensão do navegador**, atualizada sozinha a cada versão do app. Não é preciso baixar nada, e a pasta fica fora do app. No Mac isso evita o problema de o Chrome não deixar escolher uma pasta dentro do `MeetRec.app`.
 
-1. Em **Configurações → Integrações**, clique em **Abrir no Chrome**, **Abrir no Edge** ou **Abrir no Brave**. O app abre a página de extensões do navegador.
+1. Abra uma nova aba no navegador e cole `chrome://extensions` na barra de endereço. Em **Configurações → Integrações** há um botão para copiar o endereço. No Edge, se não abrir, use `edge://extensions`. O app não consegue abrir essa página sozinho, porque o navegador bloqueia isso por segurança.
 2. Ative o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e escolha a pasta da extensão. Use **Copiar caminho**; no Mac, na janela de escolher pasta, aperte **⌘ ⇧ G** e cole.
 4. Clique no ícone do MeetRec na barra do navegador e cole o **código de pareamento** que aparece em **Configurações → Integrações**.

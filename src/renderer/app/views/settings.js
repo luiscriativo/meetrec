@@ -305,14 +305,15 @@ function integrations(b) {
       <p class="muted" style="margin:0 0 14px;line-height:1.55">Lê no Teams/Meet <b>quem está falando</b>, as <b>legendas com nome</b> e a <b>lista de participantes</b>. O MeetRec usa isso para colocar o nome certo em cada fala da transcrição, detectar o início/fim da chamada e sugerir gravar.</p>
       ${st.error ? `<div class="banner err">${ic('alertCircle', 16)}<span>${esc(st.error)}</span></div>` : ''}
       ${st.connected ? `<div class="banner ok">${ic('checkCircle', 16)}<span>Conectada${st.browser ? ` ao ${esc(st.browser)}` : ''}. ${st.inCall ? `Chamada ativa no <b>${esc(st.platform)}</b>${st.participants?.length ? ` com ${st.participants.length} participantes` : ''}. ${st.captionsActive ? 'Legendas ativas ✓' : 'Ative as legendas (Mais → Idioma e fala → Legendas ao vivo) para nomes mais precisos.'}` : 'Nenhuma chamada ativa no momento.'}</span></div>` : ''}
-      ${outdated ? `<div class="banner warn">${ic('alert', 16)}<div class="grow">A extensão no ${esc(st.browser || 'navegador')} é de uma versão anterior${st.extVersion !== 'antiga' ? ` (v${esc(st.extVersion)})` : ''} à do app (v${esc(appVer)}). Na página de extensões, clique em <b>↻</b> no cartão do MeetRec para atualizar.</div></div>` : ''}
+      ${outdated ? `<div class="banner warn">${ic('alert', 16)}<div class="grow">A extensão no ${esc(st.browser || 'navegador')} é de uma versão anterior${st.extVersion !== 'antiga' ? ` (v${esc(st.extVersion)})` : ''} à do app (v${esc(appVer)}). Para atualizar: abra <span class="inline-code">chrome://extensions</span> e clique em <b>↻</b> no cartão do MeetRec.</div><button class="btn sm" data-copyurl="chrome://extensions">${ic('copy', 13)} Copiar endereço</button></div>` : ''}
       ${state.info.extensionError ? `<div class="banner warn">${ic('alert', 16)}<span>Não consegui copiar a extensão para a pasta Documentos (${esc(state.info.extensionError)}). Usando a pasta interna do app.</span></div>` : ''}
       <div class="row" style="gap:18px;align-items:flex-start;margin-top:6px">
         <div class="grow">
           <div style="font-weight:600;margin-bottom:8px">Como instalar (Chrome, Edge, Brave):</div>
           <ol class="steps-list ext-steps">
-            <li>Abra a página de extensões do navegador:
-              <div class="row ext-browsers" id="extBrowsers"><span class="muted" style="font-size:12.5px">${ic('loader', 12, 'spin')} procurando navegadores…</span></div></li>
+            <li>Abra uma nova aba no navegador e cole este endereço na barra de endereço:
+              <div class="row ext-url"><span class="inline-code">chrome://extensions</span><button class="btn sm" data-copyurl="chrome://extensions">${ic('copy', 13)} Copiar endereço</button></div>
+              <div class="muted" style="font-size:12px;margin-top:4px">Funciona no Chrome e no Brave. No Edge, se não abrir, use <span class="inline-code">edge://extensions</span>.</div></li>
             <li>Ative o <b>Modo do desenvolvedor</b> (canto superior direito)</li>
             <li>Clique em <b>Carregar sem compactação</b> e escolha a pasta da extensão:
               <div class="ext-path"><span class="inline-code" title="${esc(extDir)}">${esc(extDir)}</span></div>
@@ -343,20 +344,8 @@ function integrations(b) {
   };
   $('#openExt').onclick = async () => api.open(await ensureExt());
   $('#copyExt').onclick = async () => { await api.copy(await ensureExt()); toast('success', isMac ? 'Caminho copiado. Na janela do Chrome, use ⌘⇧G e cole.' : 'Caminho copiado.'); };
-  api.ext.browsers().then((list) => {
-    const box = $('#extBrowsers');
-    if (!box) return;
-    box.innerHTML = list.length
-      ? list.map((x) => `<button class="btn sm" data-br="${x.id}">${ic('external', 13)} Abrir no ${esc(x.name)}</button>`).join('')
-      : `<span class="muted" style="font-size:12.5px">Digite <span class="inline-code">chrome://extensions</span> na barra de endereço</span><button class="btn sm ghost" data-copyurl="chrome://extensions">${ic('copy', 12)} Copiar</button>`;
-    $$('[data-br]', box).forEach((btn) => (btn.onclick = async () => {
-      await ensureExt();
-      const r = await api.ext.openBrowser(btn.dataset.br);
-      if (r.ok) toast('success', `Abrindo ${r.url} no ${r.name}. Se não abrir, digite o endereço na barra.`);
-      else toast('error', r.error);
-    }));
-    $$('[data-copyurl]', box).forEach((btn) => (btn.onclick = async () => { await api.copy(btn.dataset.copyurl); toast('success', 'Endereço copiado. Cole na barra do navegador.'); }));
-  });
+  // O navegador não deixa um app abrir chrome://extensions direto (bloqueio de segurança): o jeito é colar o endereço
+  $$('[data-copyurl]', b).forEach((btn) => (btn.onclick = async () => { await api.copy(btn.dataset.copyurl); toast('success', 'Endereço copiado. Abra uma nova aba no navegador e cole na barra de endereço.'); }));
   $('#copyTok').onclick = async () => { await api.copy(s.bridgeToken); toast('success', 'Código copiado. Cole na extensão.'); };
   $('#newTok').onclick = async () => {
     if (!(await confirmDialog('Gerar novo código?', 'A extensão precisará ser pareada novamente com o novo código.', 'Gerar'))) return;

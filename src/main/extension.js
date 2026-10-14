@@ -4,7 +4,6 @@
 // então a extensão carregada no navegador continua funcionando depois das atualizações.
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const FOLDER_NAME = 'MeetRec - Extensão do navegador';
 const README = 'LEIA-ME.txt';
@@ -66,54 +65,4 @@ function syncExtension(src, dest) {
   }
 }
 
-// ───────── Abrir a página de extensões no navegador ─────────
-// chrome://extensions não abre pelo sistema (não é um link comum): é preciso iniciar o navegador com ela.
-function browserCandidates(platform = process.platform, env = process.env) {
-  if (platform === 'win32') {
-    const pf = env.ProgramFiles || 'C:\\Program Files';
-    const pf86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-    const local = env.LOCALAPPDATA || '';
-    return [
-      { id: 'chrome', name: 'Chrome', url: 'chrome://extensions', paths: [`${pf}\\Google\\Chrome\\Application\\chrome.exe`, `${pf86}\\Google\\Chrome\\Application\\chrome.exe`, `${local}\\Google\\Chrome\\Application\\chrome.exe`] },
-      { id: 'edge', name: 'Edge', url: 'edge://extensions', paths: [`${pf86}\\Microsoft\\Edge\\Application\\msedge.exe`, `${pf}\\Microsoft\\Edge\\Application\\msedge.exe`] },
-      { id: 'brave', name: 'Brave', url: 'brave://extensions', paths: [`${pf}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`, `${pf86}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`, `${local}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`] },
-    ];
-  }
-  if (platform === 'darwin') {
-    const home = env.HOME || '';
-    const app = (n) => [`/Applications/${n}.app`, `${home}/Applications/${n}.app`];
-    return [
-      { id: 'chrome', name: 'Chrome', url: 'chrome://extensions', app: 'Google Chrome', paths: app('Google Chrome') },
-      { id: 'edge', name: 'Edge', url: 'edge://extensions', app: 'Microsoft Edge', paths: app('Microsoft Edge') },
-      { id: 'brave', name: 'Brave', url: 'brave://extensions', app: 'Brave Browser', paths: app('Brave Browser') },
-    ];
-  }
-  const bins = (names) => names.flatMap((n) => [`/usr/bin/${n}`, `/usr/local/bin/${n}`, `/snap/bin/${n}`]);
-  return [
-    { id: 'chrome', name: 'Chrome', url: 'chrome://extensions', paths: bins(['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']) },
-    { id: 'edge', name: 'Edge', url: 'edge://extensions', paths: bins(['microsoft-edge', 'microsoft-edge-stable']) },
-    { id: 'brave', name: 'Brave', url: 'brave://extensions', paths: bins(['brave-browser', 'brave']) },
-  ];
-}
-
-function findBrowsers() {
-  return browserCandidates().map((b) => ({ ...b, path: b.paths.find((p) => p && fs.existsSync(p)) })).filter((b) => b.path)
-    .map(({ id, name, url, app, path: p }) => ({ id, name, url, app, path: p }));
-}
-
-function openExtensionsPage(id) {
-  const b = findBrowsers().find((x) => x.id === id);
-  if (!b) return { ok: false, error: 'Navegador não encontrado.' };
-  try {
-    const child = process.platform === 'darwin'
-      ? spawn('open', ['-a', b.app, b.url], { detached: true, stdio: 'ignore' })
-      : spawn(b.path, [b.url], { detached: true, stdio: 'ignore', windowsHide: false });
-    child.on('error', () => {});
-    child.unref();
-    return { ok: true, name: b.name, url: b.url };
-  } catch (e) {
-    return { ok: false, error: e.message, url: b.url };
-  }
-}
-
-module.exports = { FOLDER_NAME, syncExtension, readVersion, browserCandidates, findBrowsers, openExtensionsPage };
+module.exports = { FOLDER_NAME, syncExtension, readVersion };
