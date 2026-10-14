@@ -2,7 +2,23 @@
 const fs = require('fs');
 const os = require('os');
 const { ffmpegPath, run, findPython, clearCache } = require('./tools');
-const { claudeInfo } = require('./claude');
+const { claudeInfo, SKILL_PATH } = require('./claude');
+const { codexInfo } = require('./codex');
+const { ENGINES, engineOf } = require('./ai');
+
+// Linha do Diagnóstico para um CLI de IA. O motor escolhido aparece como erro se faltar algo;
+// o outro aparece só como informação (é opcional).
+function aiCheck(eng, info, selected) {
+  const E = ENGINES[eng];
+  const base = { id: eng, ai: true, selected, group: 'Resumo', label: `${E.cli}${selected ? ' — motor do resumo' : ''}` };
+  if (!info.ok) {
+    return { ...base, state: selected ? 'error' : 'info', detail: selected ? `${info.message} Instale: ${E.install}` : `Não instalado (opcional, alternativa ao ${eng === 'codex' ? 'Claude' : 'Codex'}). Instale: ${E.install}`, action: { id: `open-${eng}-docs`, label: 'Como instalar' } };
+  }
+  if (eng === 'codex' && !info.loggedIn) {
+    return { ...base, state: selected ? 'warn' : 'info', detail: `${info.version} · login não confirmado — rode "codex login" num terminal e entre com sua conta ChatGPT (se já fez, clique em Testar).`, action: { id: 'test-codex', label: 'Testar conexão' } };
+  }
+  return { ...base, state: selected ? 'ok' : 'info', detail: `${info.version} · ${info.path}${selected ? '' : ' · disponível como alternativa'}`, action: { id: `test-${eng}`, label: 'Testar conexão' } };
+}
 
 function bytes(n) {
   if (n > 1e9) return (n / 1e9).toFixed(1) + ' GB';
@@ -49,12 +65,14 @@ async function runChecks({ store, bridge, detector }) {
       : { id: 'cloudkey', group: 'Transcrição', label: `Chave de API ${name}`, state: 'error', detail: 'Não configurada. Vá em Configurações → Transcrição.' });
   }
 
-  // Claude
-  const ci = await claudeInfo(s);
-  add(ci.ok
-    ? { id: 'claude', group: 'Resumo', label: 'Claude Code CLI', state: 'ok', detail: `${ci.version} · ${ci.path}`, action: { id: 'test-claude', label: 'Testar conexão' } }
-    : { id: 'claude', group: 'Resumo', label: 'Claude Code CLI', state: 'error', detail: ci.message + ' Instale: npm i -g @anthropic-ai/claude-code', action: { id: 'open-claude-docs', label: 'Como instalar' } });
-  if (ci.ok) add(ci.skill
+  // Motor do resumo: Claude Code e/ou Codex CLI
+  const sel = engineOf(s);
+  const [ci, xi] = await Promise.all([claudeInfo(s), codexInfo(s)]);
+  const infos = { claude: ci, codex: xi };
+  add(aiCheck(sel, infos[sel], true));
+  const other = sel === 'claude' ? 'codex' : 'claude';
+  add(aiCheck(other, infos[other], false));
+  if (infos[sel].ok) add(fs.existsSync(SKILL_PATH)
     ? { id: 'skill', group: 'Resumo', label: 'Skill "resumo-reuniao"', state: s.useSkill ? 'ok' : 'info', detail: s.useSkill ? 'Encontrada — o resumo segue o formato dela.' : 'Encontrada, mas desativada nas Configurações.' }
     : { id: 'skill', group: 'Resumo', label: 'Skill "resumo-reuniao"', state: 'info', detail: 'Não encontrada — usando o formato estilo Notion embutido.' });
 

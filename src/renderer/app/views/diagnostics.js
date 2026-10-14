@@ -67,7 +67,7 @@ function draw() {
       <b>1. Gravação</b> — o microfone e o som do computador são gravados em faixas separadas (e uma mixada para ouvir), salvas em blocos a cada segundo: se o app fechar, nada se perde.<br>
       <b>2. Transcrição</b> — cada faixa é transcrita pelo Whisper (local ou nuvem). Separar as faixas permite saber o que <i>você</i> disse e o que os <i>outros</i> disseram.<br>
       <b>3. Falantes</b> — com a extensão do navegador, os nomes vêm do Teams/Meet (indicador de fala e legendas). Você também pode renomear falantes na transcrição.<br>
-      <b>4. Resumo</b> — o Claude Code (<span class="inline-code">claude -p</span>) recebe a transcrição, suas anotações e marcações, e escreve o resumo no formato da sua skill <span class="inline-code">resumo-reuniao</span>.
+      <b>4. Resumo</b> — o motor escolhido em Configurações → Resumo (<span class="inline-code">claude -p</span> do Claude Code ou <span class="inline-code">codex exec</span> do Codex CLI, com o login da sua conta) recebe a transcrição, suas anotações e o contexto da pasta, e escreve o resumo no formato da sua skill <span class="inline-code">resumo-reuniao</span>.
     </div>
   </div>`;
   $$('[data-act]', root).forEach((b) => (b.onclick = () => doAction(b.dataset.act)));
@@ -76,12 +76,12 @@ function draw() {
 
 async function doAction(a) {
   busyAction = a;
-  if (['install-whisper', 'download-model', 'test-claude'].includes(a)) logText = '';
+  if ((['install-whisper', 'download-model'].includes(a) || a.startsWith('test-claude') || a.startsWith('test-codex'))) logText = '';
   draw();
   const r = await api.diag.action(a);
   busyAction = null;
   if (r.message) toast(r.ok ? 'success' : 'error', r.message, { duration: 6000 });
-  if (['install-whisper', 'download-model', 'test-cloud', 'test-claude'].includes(a)) await rerun(); else draw();
+  if ((['install-whisper', 'download-model', 'test-cloud', 'test-claude', 'test-codex'].includes(a))) await rerun(); else draw();
 }
 
 export function onEvent(type, p) {

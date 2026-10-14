@@ -1,6 +1,6 @@
-// Tela "Contexto da pasta": o que o Claude sabe sobre as reuniões desta pasta.
+// Tela "Contexto da pasta": o que a IA sabe sobre as reuniões desta pasta.
 // Contexto (aprovado por você), glossário (preenchido pelas suas correções) e histórico (automático).
-import { state, ctx, api } from '../ctx.js';
+import { state, ctx, api, aiName } from '../ctx.js';
 import { $, $$, ic, esc, fmtDate, toast, confirmDialog, promptDialog, colorFor, initials } from '../util.js';
 
 let root = null, name = '', data = null, editing = false, editHistory = false, busy = false, busyMsg = '';
@@ -86,7 +86,7 @@ function sizeHtml() {
         <div class="muted" style="font-size:12.5px;margin-top:2px">Vai para cada resumo: contexto ${k(s.contextChars)} · histórico ${k(s.historyChars)} de ${k(s.historyMax)} caracteres · do glossário (${s.glossary} ${s.glossary === 1 ? 'termo' : 'termos'}) só os que aparecem na reunião${why ? ` — ${esc(why)}` : ''}.</div>
         <div class="mem-bar"><i style="width:${pct}%"></i></div>
       </div>
-      ${data.history && !data.slim ? `<button class="btn ${s.level === 'ok' ? 'ghost' : 'primary'} sm" id="slimBtn" ${busy ? 'disabled' : ''} title="O Claude junta itens repetidos, tira o que foi resolvido e propõe uma versão curta — você aprova antes de valer">${ic(working ? 'loader' : 'wand', 13, working ? 'spin' : '')} ${working ? esc(busyMsg || 'Enxugando…') : 'Enxugar com o Claude'}</button>` : ''}
+      ${data.history && !data.slim ? `<button class="btn ${s.level === 'ok' ? 'ghost' : 'primary'} sm" id="slimBtn" ${busy ? 'disabled' : ''} title="O ${aiName()} junta itens repetidos, tira o que foi resolvido e propõe uma versão curta — você aprova antes de valer">${ic(working ? 'loader' : 'wand', 13, working ? 'spin' : '')} ${working ? esc(busyMsg || 'Enxugando…') : 'Enxugar com o ${aiName()}'}</button>` : ''}
     </div>
   </div>`;
 }
@@ -135,7 +135,7 @@ async function editStale(i, keep) {
   ctx.reloadFolders(); refresh();
 }
 
-// ───────── Sugestão do Claude aguardando aprovação ─────────
+// ───────── Sugestão da IA aguardando aprovação ─────────
 function draftHtml() {
   const d = data.draft;
   if (!d) return '';
@@ -145,7 +145,7 @@ function draftHtml() {
       <span class="draft-ico">${ic('sparkles', 18)}</span>
       <div class="grow">
         <b>${isNew ? 'Montei o contexto desta pasta. Confere?' : 'Sugiro atualizar o contexto desta pasta.'}</b>
-        <div class="muted" style="font-size:12.5px;margin-top:2px">A partir de “${esc(d.fromTitle || 'reunião')}” · ${d.at ? fmtDate(d.at) : ''}. Ao aprovar, o Claude passa a usar isto em todos os resumos da pasta.</div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">A partir de “${esc(d.fromTitle || 'reunião')}” · ${d.at ? fmtDate(d.at) : ''}. Ao aprovar, a IA passa a usar isto em todos os resumos da pasta.</div>
       </div>
     </div>
     <div class="draft-body">${contextView(d, data.context)}</div>
@@ -174,17 +174,17 @@ function contextView(c, prev) {
 // ───────── Contexto aprovado (formulário) ─────────
 function contextHtml() {
   const c = data.context;
-  const title = `<div class="section-title">${ic('brain', 14)} Contexto <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— o Claude lê isto antes de cada resumo da pasta</span></div>`;
+  const title = `<div class="section-title">${ic('brain', 14)} Contexto <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— a IA lê isto antes de cada resumo da pasta</span></div>`;
   if (editing) return title + `<div class="card card-pad" id="ctxForm">${formHtml(editing === 'draft' ? data.draft : c)}</div>`;
   if (!c) {
     const canBoot = data.summarized > 0;
     return title + `<div class="card card-pad empty" style="padding:26px">
       <div class="big">${ic('sparkles', 26)}</div>
       <h3>${busy === 'boot' ? 'Montando o contexto…' : data.draft ? 'Confira a sugestão acima' : 'O contexto é montado automaticamente'}</h3>
-      <div style="max-width:520px;margin:0 auto 14px">${busy === 'boot' ? esc(busyMsg || 'O Claude está lendo os resumos desta pasta…')
-        : data.draft ? 'Aprove (ou ajuste) a sugestão do Claude e ela vira o contexto da pasta.'
-          : canBoot ? `Esta pasta já tem ${data.summarized} ${data.summarized === 1 ? 'reunião resumida' : 'reuniões resumidas'}. O Claude pode montar o contexto a partir ${data.summarized === 1 ? 'dela' : 'delas'} agora.`
-            : 'Depois da primeira reunião resumida nesta pasta, o Claude sugere quem participa, do que se trata e os objetivos — você só confere e aprova.'}</div>
+      <div style="max-width:520px;margin:0 auto 14px">${busy === 'boot' ? esc(busyMsg || `O ${aiName()} está lendo os resumos desta pasta…`)
+        : data.draft ? `Aprove (ou ajuste) a sugestão do ${aiName()} e ela vira o contexto da pasta.`
+          : canBoot ? `Esta pasta já tem ${data.summarized} ${data.summarized === 1 ? 'reunião resumida' : 'reuniões resumidas'}. O ${aiName()} pode montar o contexto a partir ${data.summarized === 1 ? 'dela' : 'delas'} agora.`
+            : `Depois da primeira reunião resumida nesta pasta, o ${aiName()} sugere quem participa, do que se trata e os objetivos — você só confere e aprova.`}</div>
       <div class="row" style="justify-content:center;gap:8px">
         ${busy === 'boot' ? ic('loader', 18, 'spin') : `${canBoot && !data.draft ? `<button class="btn primary" id="bootBtn">${ic('sparkles', 14)} Montar a partir das reuniões</button>` : ''}<button class="btn ${canBoot && !data.draft ? 'ghost' : ''}" id="manualBtn">${ic('edit', 14)} Preencher eu mesmo</button>`}
       </div>
@@ -192,7 +192,7 @@ function contextHtml() {
   }
   return title + `<div class="card card-pad">
     <div class="row" style="margin-bottom:10px"><span class="chip ok">${ic('check', 11)} Aprovado</span>${data.contextAt ? `<span class="muted" style="font-size:12px">${fmtDate(data.contextAt)}</span>` : ''}<div class="grow"></div>
-      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao Claude para revisar o contexto com base em todos os resumos da pasta">${ic(busy === 'boot' ? 'loader' : 'refresh', 13, busy === 'boot' ? 'spin' : '')} ${busy === 'boot' ? esc(busyMsg || 'Revisando…') : 'Revisar com o Claude'}</button>` : ''}
+      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao ${aiName()} para revisar o contexto com base em todos os resumos da pasta">${ic(busy === 'boot' ? 'loader' : 'refresh', 13, busy === 'boot' ? 'spin' : '')} ${busy === 'boot' ? esc(busyMsg || 'Revisando…') : 'Revisar com o ${aiName()}'}</button>` : ''}
       <button class="btn sm" id="editCtx">${ic('edit', 13)} Editar</button></div>
     ${contextView(c)}
   </div>`;
@@ -246,7 +246,7 @@ function glossaryHtml() {
 // ───────── Histórico ─────────
 function historyHtml() {
   const h = data.history || '';
-  return `<div class="section-title">${ic('history', 14)} Histórico <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— decisões e pendências, atualizado pelo Claude a cada reunião</span></div>
+  return `<div class="section-title">${ic('history', 14)} Histórico <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— decisões e pendências, atualizado pela IA a cada reunião</span></div>
   <div class="card card-pad">
     ${editHistory ? `<textarea class="textarea" id="histIn" rows="10">${esc(h)}</textarea>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="histCancel">Cancelar</button><button class="btn primary" id="histSave">${ic('check', 14)} Salvar</button></div>`
@@ -260,7 +260,7 @@ async function refresh() { await load(); if (root) draw(); }
 
 async function bootstrap() {
   if (busy) return;
-  busy = 'boot'; busyMsg = 'Iniciando o Claude Code…'; draw();
+  busy = 'boot'; busyMsg = `Iniciando o ${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'}…`; draw();
   const r = await api.folders.bootstrap(name);
   busy = false; busyMsg = '';
   if (!r.ok) toast('error', r.error);
@@ -270,7 +270,7 @@ async function bootstrap() {
 
 async function slim() {
   if (busy) return;
-  busy = 'slim'; busyMsg = 'Iniciando o Claude Code…'; draw();
+  busy = 'slim'; busyMsg = `Iniciando o ${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'}…`; draw();
   const r = await api.folders.slim(name);
   busy = false; busyMsg = '';
   if (!r.ok) toast('error', r.error);

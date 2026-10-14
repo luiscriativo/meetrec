@@ -8,7 +8,7 @@ const SECTIONS = [
   ['general', 'settings', 'Geral'],
   ['audio', 'mic', 'Áudio e gravação'],
   ['transcription', 'fileText', 'Transcrição'],
-  ['summary', 'sparkles', 'Resumo (Claude)'],
+  ['summary', 'sparkles', 'Resumo (IA)'],
   ['integrations', 'plug', 'Integrações'],
   ['shortcuts', 'keyboard', 'Atalhos'],
 ];
@@ -225,27 +225,69 @@ function transcription(b) {
 function summary(b) {
   const s = state.settings;
   const h = state.health || [];
-  const claude = h.find((c) => c.id === 'claude');
+  const sel = s.aiEngine === 'codex' ? 'codex' : 'claude';
+  const info = h.find((c) => c.id === sel);
   const skill = h.find((c) => c.id === 'skill');
+  // Status de cada CLI no cartão de escolha (vem do Diagnóstico)
+  const badge = (k) => {
+    const c = (state.health || []).find((x) => x.id === k); // sempre o diagnóstico mais recente
+    if (!c) return ['verificando…', ''];
+    if (/não instalado|não encontrado/i.test(c.detail)) return ['não instalado', 'err'];
+    if (/login não confirmado/i.test(c.detail)) return ['sem login', 'warn'];
+    return ['instalado', 'ok'];
+  };
+  const card = (k, t, d) => {
+    const [bt, bc] = badge(k);
+    return `<div class="engine ${sel === k ? 'active' : ''}" data-ai="${k}"><h4>${t}<span class="chip ${bc}" style="height:18px;font-size:10.5px">${bt}</span></h4><p>${d}</p></div>`;
+  };
+  const isCodex = sel === 'codex';
   b.innerHTML = `
-    <div class="card card-pad" style="display:flex;gap:14px;align-items:center">
+    <div class="card card-pad">
+      <div class="lbl" style="font-weight:600;margin-bottom:4px">Motor do resumo</div>
+      <div class="muted" style="font-size:12.5px;margin-bottom:10px">Usa o CLI instalado no seu PC com o login da sua conta (sem chave de API). Vale para resumos, perguntas e a memória das pastas.</div>
+      <div class="engine-cards ai-cards">
+        ${card('claude', `${ic('sparkles', 14)} Claude Code`, 'Conta Claude Pro / Max. Mostra o resumo sendo escrito em tempo real.')}
+        ${card('codex', `${ic('terminal', 14)} Codex CLI`, 'Conta ChatGPT Plus / Pro (OpenAI). O texto aparece quando o Codex termina.')}
+      </div>
+    </div>
+    <div class="card card-pad" style="display:flex;gap:14px;align-items:center;margin-top:14px">
       <span class="logo" style="width:40px;height:40px;border-radius:12px">${ic('terminal', 20)}</span>
-      <div class="grow"><b>Claude Code CLI</b><div class="muted" style="font-size:12.5px;margin-top:2px">${claude ? esc(claude.detail) : 'Verificando…'}</div></div>
-      <span class="chip ${claude?.state === 'ok' ? 'ok' : 'err'}">${claude?.state === 'ok' ? 'Conectado' : 'Não encontrado'}</span>
-      <button class="btn" id="testClaude">${ic('bolt', 14)} Testar</button>
+      <div class="grow"><b>${isCodex ? 'Codex CLI' : 'Claude Code CLI'}</b><div class="muted" style="font-size:12.5px;margin-top:2px">${info ? esc(info.detail) : 'Verificando…'}</div></div>
+      <span class="chip ${info?.state === 'ok' ? 'ok' : info?.state === 'warn' ? 'warn' : 'err'}">${info?.state === 'ok' ? 'Conectado' : info?.state === 'warn' ? 'Sem login?' : 'Não encontrado'}</span>
+      ${info && info.state === 'error' ? `<button class="btn" id="aiDocs">${ic('external', 14)} Como instalar</button>` : ''}
+      <button class="btn" id="testAi">${ic('bolt', 14)} Testar</button>
     </div>
     <div class="card" style="margin-top:14px">
-      ${field('Caminho do Claude Code', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="claudePath" data-health="1" value="${esc(s.claudePath)}" placeholder="auto (claude)">`)}
-      ${field('Modelo', 'Modelo usado pelo Claude Code para resumir e responder.', `<select class="select" data-k="claudeModel"><option value="" ${!s.claudeModel ? 'selected' : ''}>Padrão do Claude Code</option><option value="sonnet" ${s.claudeModel === 'sonnet' ? 'selected' : ''}>Sonnet (rápido)</option><option value="opus" ${s.claudeModel === 'opus' ? 'selected' : ''}>Opus (máxima qualidade)</option><option value="haiku" ${s.claudeModel === 'haiku' ? 'selected' : ''}>Haiku (mais econômico)</option></select>`)}
-      ${field('Usar a skill "resumo-reuniao"', skill ? esc(skill.detail) : 'Usa o formato da sua skill (~/.claude/skills/resumo-reuniao) no resumo.', sw('useSkill', s.useSkill, 'data-health="1"'))}
+      ${isCodex ? `
+        ${field('Caminho do Codex CLI', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="codexPath" data-health="1" value="${esc(s.codexPath)}" placeholder="auto (codex)">`)}
+        ${field('Modelo', 'Deixe vazio para usar o padrão do Codex (recomendado). Ou informe o nome de um modelo disponível na sua conta.', `<input class="input" data-k="codexModel" value="${esc(s.codexModel)}" placeholder="Padrão do Codex">`)}
+        ${field('Esforço de raciocínio', 'Mais esforço = resumos mais cuidadosos, porém mais lentos e gastam mais do seu limite de uso.', `<select class="select" data-k="codexEffort"><option value="" ${!s.codexEffort ? 'selected' : ''}>Padrão do Codex</option><option value="low" ${s.codexEffort === 'low' ? 'selected' : ''}>Baixo (mais rápido)</option><option value="medium" ${s.codexEffort === 'medium' ? 'selected' : ''}>Médio</option><option value="high" ${s.codexEffort === 'high' ? 'selected' : ''}>Alto (mais cuidadoso)</option></select>`)}`
+      : `
+        ${field('Caminho do Claude Code', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="claudePath" data-health="1" value="${esc(s.claudePath)}" placeholder="auto (claude)">`)}
+        ${field('Modelo', 'Modelo usado pelo Claude Code para resumir e responder.', `<select class="select" data-k="claudeModel"><option value="" ${!s.claudeModel ? 'selected' : ''}>Padrão do Claude Code</option><option value="sonnet" ${s.claudeModel === 'sonnet' ? 'selected' : ''}>Sonnet (rápido)</option><option value="opus" ${s.claudeModel === 'opus' ? 'selected' : ''}>Opus (máxima qualidade)</option><option value="haiku" ${s.claudeModel === 'haiku' ? 'selected' : ''}>Haiku (mais econômico)</option></select>`)}`}
+      ${field('Usar a skill "resumo-reuniao"', skill ? esc(skill.detail) : `Usa o formato da sua skill (~/.claude/skills/resumo-reuniao) no resumo${isCodex ? ' — o texto dela é enviado ao Codex junto com a transcrição' : ''}.`, sw('useSkill', s.useSkill, 'data-health="1"'))}
       ${field('Instruções adicionais para o resumo', 'Ex.: "Destaque riscos e dependências", "Escreva em inglês", "Inclua uma seção de próximos passos".', `<textarea class="textarea" data-k="customInstructions" rows="3">${esc(s.customInstructions)}</textarea>`, 'stack')}
     </div>`;
-  $('#testClaude').onclick = async (e) => {
+  $$('[data-ai]', b).forEach((c) => (c.onclick = async () => {
+    const k = c.dataset.ai;
+    if (k === sel) return;
+    await save({ aiEngine: k }, `Motor do resumo: ${k === 'codex' ? 'Codex CLI' : 'Claude Code'}.`);
+    draw();
+    // Checa de novo antes de avisar: o CLI pode ter sido instalado depois que o app abriu
+    await ctx.runHealth();
+    const [bt] = badge(k);
+    if (bt === 'não instalado') toast('warn', k === 'codex' ? 'O Codex CLI não foi encontrado. Instale com "npm i -g @openai/codex" e rode "codex login" num terminal.' : 'O Claude Code não foi encontrado. Veja "Como instalar".', { duration: 9000 });
+    else if (bt === 'sem login') toast('warn', 'Rode "codex login" num terminal e entre com sua conta ChatGPT. Depois clique em Testar.', { duration: 9000 });
+    if (sec === 'summary' && root) draw();
+  }));
+  if ($('#aiDocs')) $('#aiDocs').onclick = () => api.diag.action(`open-${sel}-docs`);
+  $('#testAi').onclick = async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true; btn.innerHTML = `${ic('loader', 14, 'spin')} Testando…`;
-    const r = await api.diag.action('test-claude');
+    const r = await api.diag.action(`test-${sel}`);
     btn.disabled = false; btn.innerHTML = `${ic('bolt', 14)} Testar`;
-    toast(r.ok ? 'success' : 'error', r.message);
+    toast(r.ok ? 'success' : 'error', r.message, { duration: r.ok ? 4000 : 10000 });
+    ctx.runHealth().then(() => { if (sec === 'summary' && root) draw(); });
   };
 }
 

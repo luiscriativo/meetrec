@@ -25,3 +25,7 @@ export const ctx = {
 };
 
 export const api = window.api;
+
+// Motor do resumo escolhido (Claude Code ou Codex CLI) — para os textos da interface
+export const aiName = () => (state.settings.aiEngine === 'codex' ? 'Codex' : 'Claude');
+export const aiHealth = () => (state.health || []).find((c) => c.ai && c.selected);

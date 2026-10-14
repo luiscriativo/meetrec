@@ -1,5 +1,5 @@
 // Shell da aplicação: navegação, barra lateral, eventos globais.
-import { state, ctx, api } from './ctx.js';
+import { state, ctx, api, aiName, aiHealth } from './ctx.js';
 import { $, $$, ic, esc, toast, modal, fmtTime, prettyShortcut, debounce, confirmDialog } from './util.js';
 import * as Home from './views/home.js';
 import * as Meeting from './views/meeting.js';
@@ -135,8 +135,8 @@ function renderSideStatus() {
     rows.push(`<button class="stat" data-go="meeting" data-id="${busyId}"><span class="led busy"></span>${running ? labels[running[0]] : 'Processando'}<span class="val">${running && running[1].progress ? Math.round(running[1].progress * 100) + '%' : '…'}</span></button>`);
   }
 
-  const claude = find('claude');
-  rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${claude ? claude.state : ''}"></span>Claude Code<span class="val">${claude ? (claude.state === 'ok' ? 'conectado' : 'verificar') : '…'}</span></button>`);
+  const ai = aiHealth();
+  rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${ai ? ai.state : ''}"></span>${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'}<span class="val">${ai ? (ai.state === 'ok' ? 'conectado' : 'verificar') : '…'}</span></button>`);
   const eng = find('whisper') || find('cloudkey') || find('python');
   const engName = s.engine === 'local' ? 'Whisper local' : s.engine === 'groq' ? 'Groq' : 'OpenAI';
   rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${eng ? eng.state : ''}"></span>Transcrição<span class="val">${esc(engName)}</span></button>`);
@@ -294,7 +294,7 @@ document.addEventListener('drop', async (e) => {
 function onboarding() {
   const health = state.health || [];
   const row = (c) => `<div class="onb-step"><span class="n" style="background:${c.state === 'ok' ? 'var(--ok)' : c.state === 'error' ? 'var(--rec)' : 'var(--warn)'}">${ic(c.state === 'ok' ? 'check' : c.state === 'error' ? 'x' : 'alert', 14)}</span><div class="grow"><b>${esc(c.label)}</b><div class="muted" style="font-size:12px">${esc(c.detail)}</div></div></div>`;
-  const important = health.filter((c) => ['claude', 'whisper', 'python', 'cloudkey', 'sysaudio'].includes(c.id));
+  const important = health.filter((c) => (c.ai && c.selected) || ['whisper', 'python', 'cloudkey', 'sysaudio'].includes(c.id));
   modal({
     title: 'Bem-vindo ao MeetRec 👋',
     wide: true,

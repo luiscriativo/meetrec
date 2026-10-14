@@ -14,8 +14,8 @@ const { Bridge } = require('./bridge');
 const { MeetingDetector } = require('./detector');
 const { Updater } = require('./updater');
 const { runChecks, installWhisper, downloadModel } = require('./diagnostics');
-const { runClaude } = require('./claude');
-const { ffmpegPath, run, resourcePath } = require('./tools');
+const { runAI, engineOf, ENGINES } = require('./ai');
+const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
 const F = require('./folders');
 
@@ -822,13 +822,19 @@ function setupIpc() {
       if (action === 'download-model') { await downloadModel(store, log); return { ok: true, message: 'Modelo baixado e pronto.' }; }
       if (action === 'open-storage') { shell.openPath(store.get('storageDir')); return { ok: true }; }
       if (action === 'open-python') { shell.openExternal('https://www.python.org/downloads/'); return { ok: true }; }
-      if (action === 'open-claude-docs') { shell.openExternal('https://docs.claude.com/en/docs/claude-code/setup'); return { ok: true }; }
+      const docs = action.match(/^open-(claude|codex)-docs$/);
+      if (docs) { shell.openExternal(ENGINES[docs[1]].docs); return { ok: true }; }
       if (action === 'open-extension') { showMain({ view: 'settings', tab: 'integrations' }); return { ok: true }; }
-      if (action === 'test-claude') {
-        log('Enviando mensagem de teste ao Claude Code…\n');
-        const r = await runClaude({ prompt: 'Responda apenas: "Conexão OK ✅"', settings: store.get(), onStatus: (m) => log(m + '\n') });
+      // Testa um motor específico (mesmo que não seja o escolhido); 'test-ai' testa o escolhido
+      const test = action.match(/^test-(claude|codex|ai)$/);
+      if (test) {
+        const eng = test[1] === 'ai' ? engineOf(store.get()) : test[1];
+        const E = ENGINES[eng];
+        clearCache(); // pega um CLI instalado depois que o app abriu
+        log(`Enviando mensagem de teste ao ${E.cli}…\n`);
+        const r = await runAI({ prompt: 'Responda apenas: "Conexão OK ✅"', settings: { ...store.get(), aiEngine: eng }, onStatus: (m) => log(m + '\n') });
         log(`Resposta: ${r.text}\n`);
-        return { ok: true, message: `Claude respondeu: ${r.text}` };
+        return { ok: true, message: `${E.name} respondeu: ${r.text}` };
       }
       if (action === 'test-cloud') {
         const s = store.get();
@@ -960,7 +966,7 @@ app.whenReady().then(async () => {
   library.on('changed', (m) => { send('library', m ? { id: m.id, removed: m.removed } : null); updateTrayThrottled(); });
   library.on('folders', (p) => send('folders', p));
   pipeline.on('folder-draft', ({ name, kind }) => {
-    toast('info', kind === 'new' ? `Montei o contexto da pasta "${name}" a partir da reunião. Confere?` : `O Claude sugeriu atualizar o contexto da pasta "${name}".`,
+    toast('info', kind === 'new' ? `Montei o contexto da pasta "${name}" a partir da reunião. Confere?` : `O ${ENGINES[engineOf(store.get())].name} sugeriu atualizar o contexto da pasta "${name}".`,
       { duration: 12000, action: { label: 'Conferir', route: { view: 'folder', name } } });
   });
   pipeline.on('progress', (p) => { send('pipeline', p); updateTrayThrottled(); });
