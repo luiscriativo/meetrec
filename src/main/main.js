@@ -522,7 +522,7 @@ function resolveDoubt(id, doubtId, { action, answer, remember }) {
   } else if (action !== 'ignore') throw new Error('Ação inválida.');
 
   const updated = library.update(id, (m) => {
-    m.doubts = (m.doubts || []).map((x) => (x.id === doubtId ? { ...x, status: action === 'fix' ? 'fixed' : action, answer: action === 'fix' ? answer : undefined, replaced, remembered, resolvedAt: new Date().toISOString() } : x));
+    m.doubts = (m.doubts || []).map((x) => (x.id === doubtId ? { ...x, status: action === 'fix' ? 'fixed' : action === 'ignore' ? 'ignored' : 'ok', answer: action === 'fix' ? answer : undefined, replaced, remembered, resolvedAt: new Date().toISOString() } : x));
     return m;
   });
   return { meta: updated, replaced, remembered };
@@ -968,7 +968,13 @@ app.whenReady().then(async () => {
   const interrupted = library.recoverInterrupted();
   const startHidden = process.argv.includes('--hidden') || store.get('startHidden');
   createMainWindow(!startHidden);
-  if (interrupted.length) setTimeout(() => toast('warn', `${interrupted.length} gravação(ões) foram interrompidas e recuperadas. Você pode processá-las agora.`, { duration: 10000, action: { label: 'Ver', route: { view: 'meeting', id: interrupted[0] } } }), 2500);
+  if (interrupted.length) {
+    // Espera a janela terminar de carregar: um aviso enviado antes disso se perde
+    const n = interrupted.length;
+    const msg = n === 1 ? 'Uma gravação foi interrompida (o app fechou no meio) e o áudio foi recuperado. Você pode processá-la agora.' : `${n} gravações foram interrompidas (o app fechou no meio) e o áudio foi recuperado. Você pode processá-las agora.`;
+    const show = () => setTimeout(() => toast('warn', msg, { duration: 15000, action: { label: 'Ver', route: { view: 'meeting', id: interrupted[0] } } }), 1200);
+    if (mainWin.webContents.isLoading()) mainWin.webContents.once('did-finish-load', show); else show();
+  }
 
   registerShortcuts();
   bridge.start();

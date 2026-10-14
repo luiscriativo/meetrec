@@ -8,7 +8,7 @@ let root = null, name = '', data = null, editing = false, editHistory = false, b
 export function topbar(route) {
   const n = route.name || '';
   return `<span class="crumb" id="crumbAll">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span>
-    <span class="crumb" id="crumbFolder">${n ? `${ic('folder', 14)} ${esc(n)}` : 'Sem pasta'}</span><span class="muted">/</span>
+    <span class="crumb" id="crumbFolder" title="${esc(n || 'Sem pasta')}">${n ? `${ic('folder', 14)} <span class="clip">${esc(n)}</span>` : 'Sem pasta'}</span><span class="muted">/</span>
     <h1>${n ? 'Contexto da pasta' : 'Glossário geral'}</h1>`;
 }
 
