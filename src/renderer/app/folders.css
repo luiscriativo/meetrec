@@ -119,3 +119,12 @@
 .ext-path { margin-top: 6px; max-width: 100%; overflow-x: auto; }
 .ext-path .inline-code { white-space: nowrap; font-size: 12px; }
 .ext-tip { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--text-2); background: var(--info-soft); padding: 7px 10px; border-radius: 9px; flex-wrap: wrap; }
+
+/* Troca rápida de microfone */
+.mic-pick { position: relative; display: inline-flex; }
+.chip-btn { border: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; }
+.chip-btn:hover { filter: brightness(.96); box-shadow: 0 0 0 1.5px currentColor inset; }
+.mic-menu { position: fixed; right: auto; min-width: 280px; max-width: 380px; z-index: 80; }
+.mic-menu .mm-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; padding: 6px 10px 4px; }
+.mic-menu button.on { color: var(--accent); font-weight: 600; }
+.mic-menu button small { display: block; font-size: 11.5px; color: var(--muted); font-weight: 400; margin-top: 1px; }

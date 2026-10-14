@@ -92,17 +92,67 @@ function bindFolderSelect() {
   };
 }
 
-export function destroy() { cancelAnimationFrame(raf); raf = null; root = null; }
+export function destroy() { cancelAnimationFrame(raf); raf = null; root = null; document.querySelectorAll(".mic-menu").forEach((m) => m.remove()); }
 
 async function loadDevices() {
   try {
     const list = await navigator.mediaDevices.enumerateDevices();
     const mics = list.filter((d) => d.kind === 'audioinput');
     const sel = mics.find((d) => d.deviceId === state.settings.micDeviceId) || mics.find((d) => d.deviceId === 'default') || mics[0];
-    devices.mic = sel ? (sel.label || 'Microfone padrão').replace(/^Padrão - |^Default - /, '') : null;
+    devices.mic = sel ? cleanLabel(sel.label) : null;
     devices.count = mics.length;
-  } catch { devices.mic = null; }
+    devices.list = mics;
+  } catch { devices.mic = null; devices.list = []; }
   if (!state.rec.active) renderLive();
+}
+
+// "Padrão - Microfone (HD Pro Webcam C920) (046d:082d)" → "Microfone (HD Pro Webcam C920)"
+function cleanLabel(l) {
+  return String(l || 'Microfone padrão').replace(/^(Padrão|Default|Comunicações|Communications) - /, '').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '');
+}
+
+// Plugar/desplugar um microfone atualiza a tela na hora
+navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (root && !state.rec.active) loadDevices(); });
+
+// Menu rápido para trocar o microfone direto na tela inicial
+function openMicMenu(anchor) {
+  document.querySelectorAll('.mic-menu').forEach((m) => m.remove());
+  const list = devices.list || [];
+  const cur = state.settings.micDeviceId || 'default';
+  const def = list.find((d) => d.deviceId === 'default');
+  const real = list.filter((d) => d.deviceId !== 'default' && d.deviceId !== 'communications');
+  const opts = [
+    ...(def ? [{ id: 'default', label: 'Padrão do sistema', sub: cleanLabel(def.label) }] : []),
+    ...real.map((d) => ({ id: d.deviceId, label: cleanLabel(d.label) || 'Microfone' })),
+  ];
+  const m = document.createElement('div');
+  m.className = 'menu mic-menu';
+  m.innerHTML = `<div class="mm-title">Microfone para gravar</div>`
+    + (opts.length ? opts.map((o, i) => `<button data-i="${i}" class="${o.id === cur ? 'on' : ''}">${ic(o.id === cur ? 'check' : 'mic', 15)}<span class="grow">${esc(o.label)}${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</span></button>`).join('')
+      : `<div class="muted" style="padding:8px 10px;font-size:12.5px">Nenhum microfone encontrado.</div>`)
+    + `<hr><button data-cfg>${ic('settings', 15)}<span class="grow">Mais opções de áudio…</span></button>`;
+  // Fica no body (o cartão corta o que passa da borda), posicionado logo abaixo do chip
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - m.offsetWidth - 12) + 'px';
+  m.style.top = (r.bottom + 6) + 'px';
+  const close = () => { m.remove(); document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', esc_); };
+  const outside = (e) => { if (!m.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const esc_ = (e) => { if (e.key === 'Escape') close(); };
+  setTimeout(() => { document.addEventListener('mousedown', outside); document.addEventListener('keydown', esc_); }, 0);
+  document.querySelector('#view')?.addEventListener('scroll', close, { once: true }); // menu fixo não acompanha a rolagem
+  m.onclick = async (e) => {
+    e.stopPropagation();
+    const b = e.target.closest('button');
+    if (!b) return;
+    close();
+    if (b.hasAttribute('data-cfg')) return ctx.navigate({ view: 'settings', tab: 'audio' });
+    const o = opts[+b.dataset.i];
+    if (o.id === cur) return;
+    state.settings = await api.setSettings({ micDeviceId: o.id });
+    toast('success', `Microfone: ${o.id === 'default' ? `padrão do sistema (${o.sub})` : o.label}.`);
+    loadDevices();
+  };
 }
 
 // ───────── Área de gravação ─────────
@@ -123,7 +173,7 @@ async function renderLive() {
           <h2>Pronto para gravar</h2>
           <p>O MeetRec grava <b>sua voz</b> e <b>tudo que toca no computador</b> (as pessoas da reunião), seja no navegador, no Teams, Zoom ou Meet. Ao parar, transcreve e o ${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'} gera o resumo.</p>
           <div class="sources">
-            <span class="chip ${devices.mic ? 'accent' : 'err'}" title="Microfone">${ic('mic', 13)} ${esc(devices.mic || 'Nenhum microfone')}</span>
+            <span class="mic-pick"><button class="chip chip-btn ${devices.mic ? 'accent' : 'err'}" id="micChip" title="Clique para trocar o microfone">${ic('mic', 13)} ${esc(devices.mic || 'Nenhum microfone')}${ic('chevronDown', 12)}</button></span>
             <span class="chip ${s.captureSystem ? 'ok' : ''}" title="Som do computador">${ic('speaker', 13)} ${s.captureSystem ? 'Som do PC ativado' : 'Som do PC desativado'}</span>
             <span class="chip">${ic('waves', 13)} ${esc(engName)}</span>
             <span class="chip ${claude ? (claude.state === 'ok' ? 'ok' : 'err') : ''}">${ic('sparkles', 13)} ${aiName()} ${claude ? (claude.state === 'ok' ? 'pronto' : 'indisponível') : '…'}</span>
@@ -139,6 +189,7 @@ async function renderLive() {
     $('#bigRec').onclick = () => api.rec.start();
     bindSugg();
     bindFolderSelect();
+    $('#micChip').onclick = (e) => { e.stopPropagation(); const open = document.querySelector('.mic-menu'); if (open) open.remove(); else openMicMenu($('.mic-pick')); };
     return;
   }
 
