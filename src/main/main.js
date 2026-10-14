@@ -18,6 +18,8 @@ const { runAI, engineOf, ENGINES } = require('./ai');
 const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
 const F = require('./folders');
+const S = require('./sync');
+const { migrateLibrary, countMeetings } = require('./migrate');
 const { FOLDER_NAME: EXT_FOLDER, syncExtension } = require('./extension');
 
 let extInfo = { dir: null, version: null };
@@ -294,7 +296,9 @@ async function startRecording(opts = {}) {
   if (opts.title || (st.inCall && st.meetingTitle)) library.update(meta.id, { title: opts.title || st.meetingTitle });
 
   rec.streams = {};
-  for (const t of ['mic', 'system', 'mix']) rec.streams[t] = fs.createWriteStream(library.file(meta.id, `${t}.webm`));
+  // Com a biblioteca no Drive, grava numa pasta local e só manda o áudio pronto no fim (ver finishRecording)
+  fs.mkdirSync(library.workDir(meta.id), { recursive: true });
+  for (const t of ['mic', 'system', 'mix']) rec.streams[t] = fs.createWriteStream(library.workFile(meta.id, `${t}.webm`));
   const seq = ++recSeq;
   Object.assign(rec, { active: true, phase: 'starting', seq, stopRequested: false, id: meta.id, paused: false, startedAt: Date.now(), pausedTotal: 0, pauseStart: 0, tracks: {}, stopping: false });
 
@@ -382,6 +386,9 @@ async function finishRecording({ crashed } = {}) {
   pipeline.setLowPriority(false);
   if (!id) { pipeline.resume(); return; }
 
+  // Leva o áudio da pasta de trabalho local para a biblioteca (no Drive, ele sobe em segundo plano).
+  // A cópia local fica para o processamento não precisar baixar de volta.
+  try { library.flushWork(id, { keep: true }); } catch (e) { toast('error', `Não consegui copiar o áudio para a pasta das gravações: ${e.message}. Ele continua salvo em ${library.workDir(id)}.`, { duration: 15000 }); }
   library.update(id, { status: 'recorded', endedAt: new Date().toISOString(), duration });
   if (duration < 3) {
     // Provavelmente um clique sem querer: descarta para não poluir a biblioteca
@@ -468,8 +475,18 @@ function folderPayload(name) {
   return { name: name || '', ...d, dir: library.folderDir(name), count: meetings.length, summarized: meetings.filter(hasSummary).length, size: F.folderSize(d) };
 }
 
+// Reunião sendo gravada/processada no outro PC (e ainda dando sinal de vida): não mexe nos arquivos dela
+function busyElsewhere(id, what) {
+  const o = library.ownerOf(id);
+  if (!o || o.stale) return null;
+  const doing = library.get(id)?.status === 'processing' ? 'sendo processada' : 'sendo gravada';
+  return `Esta reunião está ${doing} no ${o.name}. Aguarde terminar para ${what}.`;
+}
+
 async function moveMeeting(id, folder) {
   if (rec.id === id) throw new Error('Pare a gravação antes de mover esta reunião.');
+  const other = busyElsewhere(id, 'movê-la');
+  if (other) throw new Error(other);
   if (pipeline.isBusy(id)) throw new Error('Aguarde o processamento desta reunião terminar para movê-la.');
   const before = library.get(id)?.folder || '';
   const m = await library.move(id, folder);
@@ -544,7 +561,8 @@ async function importAudio(filePath, folder) {
   }
   const name = path.basename(filePath, path.extname(filePath));
   const meta = library.create({ folder: targetFolder(folder), source: 'import', status: 'processing', title: name, titleAuto: true, originalFile: 'original' + path.extname(filePath).toLowerCase() });
-  try { fs.copyFileSync(filePath, library.file(meta.id, meta.originalFile)); } catch (e) {
+  // Na nuvem, o original fica só na pasta de trabalho local: ao Drive vai apenas o áudio convertido
+  try { fs.mkdirSync(library.workDir(meta.id), { recursive: true }); fs.copyFileSync(filePath, library.workFile(meta.id, meta.originalFile)); } catch (e) {
     library.update(meta.id, { status: 'error', error: `Falha ao copiar: ${e.message}` });
     toast('error', `Não consegui importar: ${e.message}`);
     return null;
@@ -602,7 +620,7 @@ function onBridgeEvents({ tab, events }) {
   if (!rec.active || rec.paused) return;
   const rt = recTime();
   const lines = events.map((e) => JSON.stringify({ ...e, rt: e.at ? Math.max(0, rt - (Date.now() - e.at) / 1000) : rt })).join('\n') + '\n';
-  fs.appendFile(library.file(rec.id, 'events.jsonl'), lines, () => {});
+  fs.appendFile(library.workFile(rec.id, 'events.jsonl'), lines, () => {});
   const m = library.get(rec.id);
   const patch = {};
   if (tab.platform && !m.platform) patch.platform = tab.platform;
@@ -713,6 +731,8 @@ function setupIpc() {
       summary: library.readText(id, 'summary.md'),
       dir: library.dir(id),
       busy: pipeline.isBusy(id),
+      owner: library.ownerOf(id),
+      openElsewhere: library.openElsewhere(id),
     };
   });
   ipcMain.handle('lib:update', (_e, id, patch) => {
@@ -729,6 +749,8 @@ function setupIpc() {
   ipcMain.handle('lib:saveSummary', (_e, id, text) => { library.writeText(id, 'summary.md', text); return true; });
   ipcMain.handle('lib:delete', async (_e, id) => {
     if (rec.id === id) return { ok: false, error: 'Pare a gravação antes de excluir.' };
+    const other = busyElsewhere(id, 'excluí-la');
+    if (other) return { ok: false, error: other };
     pipeline.cancel(id, { silent: true });
     try { await library.remove(id); } catch (e) { return { ok: false, error: e.message }; }
     toast('success', 'Reunião movida para a lixeira.');
@@ -813,11 +835,59 @@ function setupIpc() {
 
   // Pipeline
   ipcMain.handle('pipe:process', (_e, id, from) => {
+    const other = busyElsewhere(id, 'processar aqui');
+    if (other) { toast('info', other); return false; }
+    if (library.ownerOf(id)?.stale) library.release(id); // o outro PC parou no meio: assume aqui
     const ok = pipeline.enqueue(id, from || 'audio');
     if (!ok) toast('info', 'Esta reunião já está sendo processada.');
     return ok;
   });
   ipcMain.handle('pipe:cancel', (_e, id) => pipeline.cancel(id));
+  ipcMain.handle('lib:release', (_e, id) => {
+    const o = library.ownerOf(id);
+    if (!o) return { ok: true };
+    library.release(id);
+    toast('success', `Reunião liberada. Ela não depende mais do ${o.name}.`);
+    return { ok: true };
+  });
+
+  // Sincronização entre computadores (pasta no Google Drive)
+  ipcMain.handle('sync:presence', (_e, id) => library.setPresence(id));
+  ipcMain.handle('sync:info', () => {
+    const drive = S.findGoogleDrive();
+    const driveTarget = drive ? path.join(drive, 'MeetRec - Reuniões') : null;
+    return {
+      root: library.root,
+      cloud: S.cloudKind(library.root),
+      drive,
+      driveInstalled: !!drive || S.googleDriveInstalled(),
+      driveTarget,
+      driveCount: driveTarget && fs.existsSync(driveTarget) ? countMeetings(driveTarget) : 0,
+      localCount: library.list().length,
+      machine: library.machine.name,
+      hostname: S.machineName(),
+      ...library.syncState,
+    };
+  });
+  ipcMain.handle('sync:migrate', async (_e, target, mode) => {
+    if (rec.active) return { ok: false, error: 'Pare a gravação antes de trocar a pasta das gravações.' };
+    if (pipeline.current || pipeline.queue.length) return { ok: false, error: 'Aguarde o processamento terminar antes de trocar a pasta das gravações.' };
+    const from = library.root;
+    library.syncPaused = true; // não relê a pasta antiga enquanto as reuniões estão saindo dela
+    try {
+      library.setPresence(null);
+      const res = await migrateLibrary(from, target, mode, ({ done, total }) => send('sync-progress', { done, total }));
+      store.set({ storageDir: target });
+      // Regrava o contexto das pastas juntadas (atualiza GLOSSARIO.md/CONTEXTO.md com o conteúdo somado)
+      for (const name of res.mergedFolders) { try { library.updateFolder(name, {}); } catch {} }
+      return { ok: true, ...res };
+    } catch (e) {
+      // Algo deu errado no meio: o que já foi levado continua no destino; relê a pasta antiga
+      library.load();
+      library.emit('changed', null);
+      return { ok: false, error: e.message };
+    } finally { library.syncPaused = false; }
+  });
   ipcMain.handle('pipe:status', () => pipeline.status());
   ipcMain.handle('pipe:ask', async (e, id, question) => {
     try {
@@ -936,13 +1006,18 @@ app.on('before-quit', (e) => {
 });
 app.on('activate', () => showMain());
 app.on('window-all-closed', (e) => { /* fica na bandeja */ });
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  // Deixa claro para o outro PC que nada mais está rodando aqui (senão ele espera o sinal de vida expirar)
+  try { library?.recoverInterrupted(); library?.close(); } catch {}
+});
 
 app.whenReady().then(async () => {
   store = new Store();
   extInfo = syncExtensionCopy();
-  library = new Library(store);
+  library = new Library(store, { workRoot: path.join(app.getPath('userData'), 'trabalho') });
   pipeline = new Pipeline(library, store);
+  library.isLive = (id) => rec.id === id || pipeline.isBusy(id);
   bridge = new Bridge(store, app.getVersion());
   detector = new MeetingDetector();
   updater = new Updater();
@@ -967,6 +1042,7 @@ app.whenReady().then(async () => {
   createOverlay();
 
   const interrupted = library.recoverInterrupted();
+  library.cleanWork();
   const startHidden = process.argv.includes('--hidden') || store.get('startHidden');
   createMainWindow(!startHidden);
   if (interrupted.length) {
@@ -985,6 +1061,7 @@ app.whenReady().then(async () => {
   // Eventos
   library.on('changed', (m) => { send('library', m ? { id: m.id, removed: m.removed } : null); updateTrayThrottled(); });
   library.on('folders', (p) => send('folders', p));
+  library.on('presence', () => send('presence', null));
   pipeline.on('folder-draft', ({ name, kind }) => {
     toast('info', kind === 'new' ? `Montei o contexto da pasta "${name}" a partir da reunião. Confere?` : `O ${ENGINES[engineOf(store.get())].name} sugeriu atualizar o contexto da pasta "${name}".`,
       { duration: 12000, action: { label: 'Conferir', route: { view: 'folder', name } } });

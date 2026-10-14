@@ -12,6 +12,8 @@ function defaults() {
     userName: '',
     language: 'pt',
     storageDir: path.join(app.getPath('documents'), 'MeetRec - Reuniões'),
+    machineId: crypto.randomBytes(6).toString('hex'), // identifica este PC na pasta sincronizada
+    machineName: '', // '' = nome do computador
 
     micDeviceId: 'default',
     captureSystem: true,

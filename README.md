@@ -111,6 +111,14 @@ Em **Configurações → Resumo (IA)**, escolha qual CLI escreve os resumos: o *
   1. os termos vão como vocabulário para o Whisper;
   2. as grafias erradas que você **já confirmou** são corrigidas automaticamente.
 
+**🔁 Sincronização entre computadores pelo Google Drive**
+- Em **Configurações → Geral → Sincronizar entre computadores**, clique em **Usar o Google Drive**. A biblioteca vai para `Meu Drive\MeetRec - Reuniões`. Se o outro PC já estiver lá, as duas bibliotecas são juntadas sem apagar nem sobrescrever nada, e o glossário das pastas com o mesmo nome é somado.
+- Reuniões, resumos, pastas, contexto e glossário aparecem nos dois computadores. A lista se atualiza sozinha quando chega algo do outro PC.
+- Uma reunião sendo gravada ou processada num PC aparece no outro como **"Gravando no NOTEBOOK"** ou **"Processando no NOTEBOOK"**. Se aquele PC desligar no meio, depois de 10 minutos sem sinal dá para **liberar** a reunião e continuar no outro.
+- Quando a mesma reunião está aberta nos dois PCs, aparece um aviso. Se o Drive gerar uma cópia de conflito (`meta (1).json`), o app junta as duas versões sozinho.
+- Funciona com o Google Drive em **streaming** (o padrão), sem precisar espelhar o Drive inteiro. A gravação e o processamento acontecem numa pasta local, e só o resultado final vai para o Drive. O áudio de uma reunião feita no outro PC é baixado na primeira vez que você ouve ou processa.
+- Opcional: clique com o botão direito em `MeetRec - Reuniões` no Drive → **Acesso off-line → Disponível off-line**. Assim só essa pasta fica no disco, para ouvir sem espera e sem internet.
+
 **🧰 E mais**
 - **Biblioteca** de reuniões agrupada por dia, com busca em títulos, transcrições e resumos.
 - **Importe** áudios e vídeos existentes (mp3, m4a, wav, mp4, mkv…) para transcrever e resumir.

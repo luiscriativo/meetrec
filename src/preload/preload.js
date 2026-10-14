@@ -42,6 +42,13 @@ contextBridge.exposeInMainWorld('api', {
     mediaUrl: inv('lib:mediaUrl'),
     move: inv('lib:move'),
     resolveDoubt: inv('lib:resolveDoubt'),
+    release: inv('lib:release'),
+  },
+
+  sync: {
+    info: inv('sync:info'),
+    migrate: inv('sync:migrate'),
+    presence: inv('sync:presence'),
   },
 
   pipe: {

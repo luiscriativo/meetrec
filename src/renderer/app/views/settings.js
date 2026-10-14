@@ -1,6 +1,6 @@
 // Configurações.
 import { state, ctx, api } from '../ctx.js';
-import { $, $$, ic, esc, toast, prettyShortcut, relTime, confirmDialog } from '../util.js';
+import { $, $$, ic, esc, toast, prettyShortcut, relTime, confirmDialog, modal } from '../util.js';
 
 let root = null, sec = 'general', testStream = null, testRaf = null;
 
@@ -72,21 +72,96 @@ function general(b) {
   b.innerHTML = `<div class="card" id="updCard" style="margin-bottom:14px">${updateField()}</div>
   <div class="card">
     ${field('Seu nome', 'Como suas falas (microfone) aparecem na transcrição e no resumo.', `<input class="input" data-k="userName" value="${esc(s.userName)}" placeholder="Ex.: Luis">`)}
-    ${field('Pasta das gravações', esc(s.storageDir), `<button class="btn" id="pickDir">${ic('folder', 14)} Alterar…</button><button class="btn ghost icon" id="openDir" title="Abrir">${ic('external', 15)}</button>`)}
     ${field('Transcrever e resumir automaticamente', 'Ligado: ao parar, já transcreve e resume em segundo plano (com prioridade baixa, e esperando se outra gravação começar). Desligado: só grava — depois use "Processar pendentes" na lista para fazer tudo de uma vez.', sw('autoProcess', s.autoProcess))}
     ${field('Iniciar com o sistema', 'Abre o MeetRec minimizado na bandeja quando você liga o computador.', sw('launchAtLogin', s.launchAtLogin))}
     ${field('Iniciar minimizado', 'Ao abrir, fica só na bandeja (ícone perto do relógio).', sw('startHidden', s.startHidden))}
     ${field('Tema', '', `<select class="select" data-k="theme" style="width:200px"><option value="system" ${s.theme === 'system' ? 'selected' : ''}>Automático (sistema)</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>Claro</option><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>Escuro</option></select>`)}
     ${field('Notificações do sistema', 'Avisos de início/fim de gravação, resumo pronto e erros.', sw('notifications', s.notifications))}
     ${field('Sons', 'Sinal sonoro discreto ao iniciar, parar e marcar momentos.', sw('sounds', s.sounds))}
-  </div>`;
+  </div>
+  <div class="card" id="syncCard" style="margin-top:14px"><div class="field"><div class="muted">${ic('loader', 14, 'spin')} Verificando a sincronização…</div></div></div>`;
   bindUpdate();
-  $('#pickDir').onclick = async () => {
-    if (state.rec.active) return toast('warn', 'Pare a gravação antes de trocar a pasta das gravações.');
-    const d = await api.pickFolder();
-    if (d) { await save({ storageDir: d }, 'Pasta alterada. Novas gravações serão salvas lá.'); await ctx.reloadList(); draw(); }
-  };
+  drawSync();
+}
+
+// ───────── Sincronização entre computadores (pasta no Google Drive) ─────────
+const DRIVE_URL = 'https://www.google.com/drive/download/';
+
+async function drawSync() {
+  if (!$('#syncCard')) return;
+  const i = await api.sync.info();
+  const card = $('#syncCard');
+  if (!card) return;
+  const s = state.settings;
+  const inDrive = i.cloud === 'Google Drive';
+  const status = inDrive
+    ? `<div class="banner ok" style="margin:0">${ic('check', 16)}<div class="grow"><b>Sincronizando pelo Google Drive.</b> Reuniões, resumos, pastas e glossário aparecem nos dois computadores. ${i.watching ? 'Mudanças do outro PC chegam em segundos.' : 'Mudanças do outro PC chegam em até 20 segundos.'}${i.conflictsMerged ? ` · ${i.conflictsMerged} edição(ões) simultânea(s) juntada(s)` : ''}</div></div>`
+    : i.cloud
+      ? `<div class="banner info" style="margin:0">${ic('info', 16)}<div class="grow">A pasta está no <b>${esc(i.cloud)}</b>. Funciona igual, desde que o outro computador use a mesma pasta.</div></div>`
+      : i.drive
+        ? `<div class="banner info" style="margin:0;align-items:center">${ic('info', 16)}<div class="grow"><b>Ainda não sincroniza.</b> As reuniões ficam só neste computador. O Google Drive está instalado aqui: é só um clique.</div><button class="btn primary sm" id="useDrive">${ic('refresh', 14)} Usar o Google Drive</button></div>`
+        : i.driveInstalled
+          ? `<div class="banner warn" style="margin:0;align-items:center">${ic('alert', 16)}<div class="grow"><b>O Google Drive está instalado, mas fechado.</b> Abra o Google Drive, entre na sua conta e espere aparecer o "Meu Drive" (normalmente a unidade G:).</div><button class="btn sm" id="recheck">${ic('refresh', 14)} Verificar de novo</button></div>`
+          : `<div class="banner warn" style="margin:0;align-items:center">${ic('alert', 16)}<div class="grow"><b>Ainda não sincroniza.</b> Instale o <b>Google Drive para computador</b> nos dois PCs, entre na mesma conta e volte aqui.</div><button class="btn sm" id="getDrive">${ic('external', 14)} Baixar o Google Drive</button></div>`;
+  card.innerHTML = `
+    <div class="field" style="display:block"><div class="lbl" style="margin-bottom:8px">Sincronizar entre computadores</div>${status}</div>
+    ${field('Pasta das gravações', esc(i.root), `<button class="btn" id="pickDir">${ic('folder', 14)} Alterar…</button><button class="btn ghost icon" id="openDir" title="Abrir">${ic('external', 15)}</button>`)}
+    ${field('Nome deste computador', 'Aparece no outro PC: "Gravando no …", "Também aberta no …".', `<input class="input" data-k="machineName" value="${esc(s.machineName || '')}" placeholder="${esc(i.hostname)}" style="width:200px">`)}
+    ${inDrive || i.drive ? `<div class="field" style="display:block"><div class="desc">${ic('info', 13)} Funciona com o Google Drive em <b>streaming</b> (o padrão), sem baixar o resto do seu Drive. Gravação e processamento acontecem numa pasta local, e só o resultado vai para o Drive. O áudio de uma reunião feita no outro PC é baixado na primeira vez que você ouve ou processa. <b>Opcional:</b> para ouvir sem espera e ter tudo mesmo sem internet, clique com o botão direito em <b>MeetRec - Reuniões</b> dentro do Google Drive → <b>Acesso off-line → Disponível off-line</b>. Só essa pasta fica no disco.</div></div>` : ''}`;
+  bindGeneric(card);
   $('#openDir').onclick = () => api.lib.openFolder();
+  $('#pickDir').onclick = async () => {
+    const d = await api.pickFolder();
+    if (d) await switchLibrary(d, i, {});
+  };
+  if ($('#useDrive')) $('#useDrive').onclick = () => switchLibrary(i.driveTarget, i, { there: i.driveCount, isDrive: true });
+  if ($('#getDrive')) $('#getDrive').onclick = () => api.open(DRIVE_URL);
+  if ($('#recheck')) $('#recheck').onclick = drawSync;
+}
+
+// Pergunta o que fazer com as reuniões daqui e troca a pasta (juntando com a do outro PC, se houver)
+async function switchLibrary(target, i, { there = 0, isDrive = false }) {
+  if (state.rec.active) return toast('warn', 'Pare a gravação antes de trocar a pasta das gravações.');
+  const here = i.localCount;
+  const where = isDrive ? 'no Google Drive' : 'na nova pasta';
+  const text = there
+    ? `Já existem ${there} reuniões ${where} (provavelmente do outro computador). As ${here} reuniões deste PC podem ser juntadas a elas: nada é apagado nem sobrescrito, e o glossário das pastas com o mesmo nome é somado.`
+    : here ? `Levar as ${here} reuniões deste computador para ${isDrive ? 'o Google Drive' : 'a nova pasta'}? Elas saem da pasta atual e passam a ficar lá.` : 'Passar a salvar as reuniões nessa pasta?';
+  const mode = await new Promise((resolve) => {
+    modal({
+      title: isDrive ? 'Sincronizar pelo Google Drive' : 'Trocar a pasta das gravações',
+      body: `<p class="muted" style="line-height:1.5;margin:4px 0 0">${esc(text)}</p><p class="muted" style="font-size:12.5px;margin:10px 0 0;display:flex;gap:6px;align-items:center">${ic('folder', 12)} ${esc(target)}</p>`,
+      onClose: () => resolve(null),
+      actions: [
+        { label: 'Cancelar', onClick: () => resolve(null) },
+        ...(here ? [{ label: there ? 'Só usar a de lá' : 'Só trocar a pasta', onClick: () => resolve('switch') }] : []),
+        { label: `${ic('check', 14)} ${here ? (there ? 'Juntar e usar' : 'Levar as reuniões') : 'Usar essa pasta'}`, kind: 'primary', onClick: () => resolve(here ? 'move' : 'switch') },
+      ],
+    });
+  });
+  if (!mode) return;
+  if (mode === 'switch' && here && !(await confirmDialog('Deixar as reuniões daqui para trás?', `As ${here} reuniões deste computador continuam em "${i.root}", mas não aparecem mais no app (dá para voltar trocando a pasta de novo).`, 'Só trocar'))) return;
+  const card = $('#syncCard');
+  if (card) card.innerHTML = `<div class="field" style="display:block"><b>${ic('loader', 15, 'spin')} ${mode === 'move' ? 'Levando as reuniões…' : 'Trocando a pasta…'}</b><div class="progress" style="margin-top:10px"><i id="syncBar" style="width:0%"></i></div><div class="desc" id="syncTxt" style="margin-top:6px">Não feche o app.</div></div>`;
+  const r = await api.sync.migrate(target, mode);
+  state.settings = await api.getSettings();
+  await ctx.reloadList();
+  ctx.refreshSidebar();
+  if (!r.ok) toast('error', r.error, { duration: 12000 });
+  else {
+    const parts = [];
+    if (r.moved) parts.push(`${r.moved} ${r.moved === 1 ? 'reunião levada' : 'reuniões levadas'}`);
+    if (r.skipped?.length) parts.push(`${r.skipped.length} já ${r.skipped.length === 1 ? 'estava' : 'estavam'} lá (a cópia daqui ficou na pasta antiga)`);
+    const extra = parts.length ? ` ${parts.join(' · ')}.` : '';
+    toast('success', isDrive ? `Pronto! Agora as reuniões sincronizam pelo Google Drive.${extra} Faça o mesmo no outro computador.` : `Pasta alterada.${extra}`, { duration: 10000 });
+  }
+  if (root && sec === 'general') draw();
+}
+
+function syncProgress(p) {
+  const b = $('#syncBar'), t = $('#syncTxt');
+  if (b && p.total) b.style.width = `${Math.round((p.done / p.total) * 100)}%`;
+  if (t && p.total) t.textContent = `${p.done} de ${p.total} reuniões · não feche o app.`;
 }
 
 function updateText(u) {
@@ -406,4 +481,5 @@ export function onEvent(type, p) {
     if (s !== bridgeSig && document.activeElement?.tagName !== 'INPUT') { bridgeSig = s; draw(); }
   }
   if (type === 'health' && (sec === 'summary')) draw();
+  if (type === 'sync-progress') syncProgress(p);
 }

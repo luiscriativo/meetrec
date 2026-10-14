@@ -5,6 +5,7 @@ import { pickFolderDialog, moveMeeting } from '../folders-ui.js';
 
 let root = null, id = null, data = null, tab = 'summary';
 let editing = false, follow = true, tFilter = '', sig = '', asking = false, askText = '';
+let activeAt = null; // início do trecho tocado por um botão "Ouvir o trecho" (vira pausar enquanto toca)
 const audio = () => $('#audio');
 
 // Solta o arquivo de áudio (no Windows, um arquivo aberto no player não pode ser apagado nem substituído)
@@ -45,19 +46,30 @@ export async function render(el, route) {
   el.innerHTML = `<div class="view-inner">
     <div class="m-head" id="mHead"></div>
     <div id="mStatus"></div>
+    <div id="mSync"></div>
     <div id="mWarn"></div>
     <div class="card player" id="player"></div>
     <div class="tabs" id="tabs"></div>
     <div id="tabBody"></div>
   </div>`;
-  renderHead(); renderStatus(); renderWarn(); renderPlayer(); renderTabs(); renderBody();
+  renderHead(); renderStatus(); renderSync(); renderWarn(); renderPlayer(); renderTabs(); renderBody();
   sig = signature();
+  api.sync.presence(id);
+  el.addEventListener('scroll', onScroll, { passive: true });
+}
+
+// Player fica preso no topo ao rolar; ganha sombra quando está "flutuando" sobre o conteúdo
+function onScroll() {
+  const p = $('#player');
+  if (p && root) p.classList.toggle('stuck', root.scrollTop > 0 && p.getBoundingClientRect().top - root.getBoundingClientRect().top <= 1);
 }
 
 export function destroy() {
   const a = audio();
-  if (a) { a.ontimeupdate = a.onplay = a.onpause = a.onloadedmetadata = a.onended = a.onerror = null; releaseAudio(); }
-  root = null;
+  if (a) { a.ontimeupdate = a.onplay = a.onpause = a.onplaying = a.oncanplay = a.onwaiting = a.onloadedmetadata = a.onended = a.onerror = null; releaseAudio(); }
+  root?.removeEventListener('scroll', onScroll);
+  if (root) api.sync.presence(null);
+  root = null; activeAt = null;
 }
 
 async function load() { data = await api.lib.get(id); }
@@ -173,10 +185,39 @@ function stepView(m) {
   }).join('');
 }
 
+// Reunião sendo gravada/processada no outro computador
+function remoteStatus(el, m, o) {
+  const doing = m.status === 'processing' ? 'processada' : 'gravada';
+  if (o.stale) {
+    el.innerHTML = `<div class="banner warn" style="margin-bottom:14px;align-items:center">${ic('alert', 17)}<div class="grow"><b>Parada no ${esc(o.name)}?</b><div>Esta reunião estava sendo ${doing} lá, mas há mais de 10 minutos não chega sinal dele. Se ele foi desligado no meio, libere para continuar aqui.</div></div><button class="btn primary sm" id="releaseBtn">${ic('refresh', 14)} Liberar aqui</button></div>`;
+    $('#releaseBtn').onclick = async () => {
+      if (!(await confirmDialog('Liberar a reunião?', `Use só se o ${o.name} realmente parou. Se ele ainda estiver ${m.status === 'processing' ? 'processando' : 'gravando'} sem internet, o trabalho dele pode entrar em conflito com o daqui.`, 'Liberar'))) return;
+      await api.lib.release(id);
+    };
+  } else if (m.status === 'processing') {
+    el.innerHTML = `<div class="card card-pad" style="margin-bottom:14px">
+      <div class="row" style="margin-bottom:12px">${ic('loader', 16, 'spin')}<b>Processando no ${esc(o.name)}</b><span class="muted" style="font-size:12.5px">— o resumo aparece aqui sozinho quando chegar pelo Drive.</span></div>
+      <div class="steps">${stepView(m)}</div></div>`;
+  } else {
+    el.innerHTML = `<div class="banner warn" style="margin-bottom:14px;align-items:center">${ic('mic', 17)}<div class="grow">Esta reunião está sendo gravada no <b>${esc(o.name)}</b>. Quando terminar, ela aparece completa aqui.</div></div>`;
+  }
+}
+
+// Avisa quando a mesma reunião está aberta no outro computador
+function renderSync() {
+  const el = $('#mSync');
+  if (!el) return;
+  const others = (data.openElsewhere || []).map((o) => o.name);
+  el.innerHTML = others.length && !data.owner
+    ? `<div class="banner info sync-banner">${ic('users', 16)}<div class="grow">Também aberta no <b>${esc(others.join(', '))}</b>. Alterações feitas lá aparecem aqui sozinhas — evite editar o mesmo texto nos dois ao mesmo tempo.</div></div>`
+    : '';
+}
+
 function renderStatus() {
   const el = $('#mStatus');
   if (!el) return;
   const m = data.meta;
+  if (data.owner) return remoteStatus(el, m, data.owner);
   if (m.status === 'processing') {
     el.innerHTML = `<div class="card card-pad" style="margin-bottom:14px">
       <div class="row" style="margin-bottom:12px">${ic('loader', 16, 'spin')}<b>Processando a reunião</b><span class="muted" style="font-size:12.5px">— pode continuar usando o computador; avisarei quando terminar.</span><div class="grow"></div><button class="btn sm ghost" id="cancelBtn">${ic('x', 13)} Cancelar</button></div>
@@ -238,7 +279,9 @@ async function renderPlayer() {
   upd();
   a.ontimeupdate = upd;
   a.onloadedmetadata = upd;
-  a.onplay = a.onpause = () => { const b = $('#playBtn'); if (b) b.innerHTML = ic(a.paused ? 'play' : 'pause', 18); };
+  a.onplay = a.onpause = a.onplaying = a.oncanplay = () => { const b = $('#playBtn'); if (b) { b.innerHTML = ic(a.paused ? 'play' : 'pause', 18); b.title = 'Reproduzir / pausar (espaço)'; } syncPlayAt(); };
+  // Com o Drive em "streaming", o áudio é baixado na primeira vez que toca: mostra que está carregando
+  a.onwaiting = () => { const b = $('#playBtn'); if (b && !a.paused) { b.innerHTML = ic('loader', 18, 'spin'); b.title = 'Carregando o áudio…'; } };
   a.onerror = () => toast('error', 'Não foi possível tocar o áudio desta reunião.');
   $('#playBtn').onclick = () => (a.paused ? a.play() : a.pause());
   $('#back10').onclick = () => { a.currentTime = Math.max(0, a.currentTime - 10); };
@@ -251,6 +294,7 @@ async function renderPlayer() {
   const seek = $('#seek');
   const seekTo = (ev) => { const r = seek.getBoundingClientRect(); a.currentTime = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * dur(); upd(); };
   seek.onmousedown = (ev) => {
+    activeAt = null; syncPlayAt();
     seekTo(ev);
     const mv = (e2) => seekTo(e2);
     const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
@@ -258,11 +302,26 @@ async function renderPlayer() {
   };
 }
 
-function playAt(t) {
+// toggle = true: botão de trecho que vira "pausar" enquanto aquele trecho está tocando
+function playAt(t, toggle = false) {
   const a = audio();
   if (!a.src) return;
+  if (toggle && activeAt === t && !a.paused) { a.pause(); return; }
+  if (toggle && activeAt === t && a.paused) { a.play(); return; }
+  activeAt = toggle ? t : null;
   a.currentTime = Math.max(0, t - 0.3);
   a.play();
+  syncPlayAt();
+}
+
+function syncPlayAt() {
+  const a = audio();
+  $$('.play-at').forEach((b) => {
+    const on = activeAt === +b.dataset.t && a && !a.paused;
+    b.classList.toggle('on', on);
+    b.title = on ? 'Pausar (espaço)' : 'Ouvir o trecho';
+    b.innerHTML = `${ic(on ? 'pause' : 'play', 10)} ${fmtTime(+b.dataset.t)}`;
+  });
 }
 
 // Atalho: espaço = play/pause (fora de campos de texto)
@@ -426,7 +485,8 @@ function doubtsHtml() {
 function bindDoubts() {
   const box = $('#doubts');
   if (!box) return;
-  $$('.play-at', box).forEach((b) => (b.onclick = () => playAt(+b.dataset.t)));
+  $$('.play-at', box).forEach((b) => (b.onclick = () => playAt(+b.dataset.t, true)));
+  syncPlayAt();
   $$('.doubt', box).forEach((card) => {
     const did = card.dataset.d;
     const inp = card.querySelector('[data-in]');
@@ -624,7 +684,7 @@ const reload = debounce(async () => {
   const s = signature();
   const changed = s !== sig;
   sig = s;
-  renderStatus(); renderWarn();
+  renderStatus(); renderSync(); renderWarn();
   if (document.activeElement?.id !== 'mTitle') renderHead();
   if (changed) {
     renderTabs();
@@ -635,6 +695,7 @@ const reload = debounce(async () => {
 
 export function onEvent(type, p) {
   if (!root) return;
+  if (type === 'presence') { api.lib.get(id).then((d) => { if (d && root && d.meta.id === id) { data.openElsewhere = d.openElsewhere; renderSync(); } }); return; }
   if (type === 'list-reloaded' || ((type === 'pipeline-done' || type === 'pipeline-failed' || type === 'pipeline-start') && p.id === id)) reload();
   else if (type === 'pipeline' && p.id === id) {
     // Atualiza só os passos (rápido)
