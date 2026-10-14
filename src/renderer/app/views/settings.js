@@ -295,6 +295,9 @@ function integrations(b) {
   const s = state.settings;
   const st = state.bridge;
   const extDir = state.info.extensionDir;
+  const isMac = state.info.platform === 'darwin';
+  const appVer = state.info.extensionVersion || state.info.version;
+  const outdated = st.connected && st.extVersion && st.extVersion !== appVer;
   b.innerHTML = `
     <div class="card card-pad">
       <div class="row" style="margin-bottom:10px"><b style="font-size:15px">Extensão para Teams / Google Meet no navegador</b><div class="grow"></div>
@@ -302,16 +305,22 @@ function integrations(b) {
       <p class="muted" style="margin:0 0 14px;line-height:1.55">Lê no Teams/Meet <b>quem está falando</b>, as <b>legendas com nome</b> e a <b>lista de participantes</b>. O MeetRec usa isso para colocar o nome certo em cada fala da transcrição, detectar o início/fim da chamada e sugerir gravar.</p>
       ${st.error ? `<div class="banner err">${ic('alertCircle', 16)}<span>${esc(st.error)}</span></div>` : ''}
       ${st.connected ? `<div class="banner ok">${ic('checkCircle', 16)}<span>Conectada${st.browser ? ` ao ${esc(st.browser)}` : ''}. ${st.inCall ? `Chamada ativa no <b>${esc(st.platform)}</b>${st.participants?.length ? ` com ${st.participants.length} participantes` : ''}. ${st.captionsActive ? 'Legendas ativas ✓' : 'Ative as legendas (Mais → Idioma e fala → Legendas ao vivo) para nomes mais precisos.'}` : 'Nenhuma chamada ativa no momento.'}</span></div>` : ''}
+      ${outdated ? `<div class="banner warn">${ic('alert', 16)}<div class="grow">A extensão no ${esc(st.browser || 'navegador')} é de uma versão anterior${st.extVersion !== 'antiga' ? ` (v${esc(st.extVersion)})` : ''} à do app (v${esc(appVer)}). Na página de extensões, clique em <b>↻</b> no cartão do MeetRec para atualizar.</div></div>` : ''}
+      ${state.info.extensionError ? `<div class="banner warn">${ic('alert', 16)}<span>Não consegui copiar a extensão para a pasta Documentos (${esc(state.info.extensionError)}). Usando a pasta interna do app.</span></div>` : ''}
       <div class="row" style="gap:18px;align-items:flex-start;margin-top:6px">
         <div class="grow">
           <div style="font-weight:600;margin-bottom:8px">Como instalar (Chrome, Edge, Brave):</div>
-          <ol class="steps-list">
-            <li>Abra <span class="inline-code">chrome://extensions</span> (ou <span class="inline-code">edge://extensions</span>)</li>
-            <li>Ative o <b>Modo do desenvolvedor</b></li>
-            <li>Clique em <b>Carregar sem compactação</b> e escolha a pasta da extensão</li>
+          <ol class="steps-list ext-steps">
+            <li>Abra a página de extensões do navegador:
+              <div class="row ext-browsers" id="extBrowsers"><span class="muted" style="font-size:12.5px">${ic('loader', 12, 'spin')} procurando navegadores…</span></div></li>
+            <li>Ative o <b>Modo do desenvolvedor</b> (canto superior direito)</li>
+            <li>Clique em <b>Carregar sem compactação</b> e escolha a pasta da extensão:
+              <div class="ext-path"><span class="inline-code" title="${esc(extDir)}">${esc(extDir)}</span></div>
+              <div class="row" style="margin-top:8px;gap:6px"><button class="btn sm" id="openExt">${ic('folder', 13)} Abrir pasta</button><button class="btn sm ghost" id="copyExt">${ic('copy', 13)} Copiar caminho</button></div>
+              ${isMac ? `<div class="ext-tip">${ic('info', 13)} No Mac: na janela de escolher pasta, aperte <span class="kbd">⌘</span> <span class="kbd">⇧</span> <span class="kbd">G</span>, cole o caminho copiado e aperte Enter.</div>` : ''}</li>
             <li>Clique no ícone do MeetRec na barra do navegador e cole o código ao lado</li>
           </ol>
-          <div class="row" style="margin-top:10px"><button class="btn" id="openExt">${ic('folder', 14)} Abrir pasta da extensão</button><button class="btn ghost" id="copyExt">${ic('copy', 14)} Copiar caminho</button></div>
+          <div class="muted" style="font-size:12px;margin-top:8px;line-height:1.5">A pasta fica em Documentos e é atualizada sozinha junto com o app — não precisa baixar nada. Não mova nem apague a pasta depois de instalar.</div>
         </div>
         <div style="text-align:center">
           <div class="muted" style="font-size:12px;margin-bottom:6px">Código de pareamento</div>
@@ -325,8 +334,29 @@ function integrations(b) {
       ${field('Sugerir parar quando a reunião acabar', 'Mostra um aviso quando o app de reunião solta o microfone ou a chamada termina.', sw('autoStopSuggest', s.autoStopSuggest))}
       ${field('Porta local da extensão', 'A extensão fala com o MeetRec só em 127.0.0.1. Mude se a porta estiver em uso.', `<input class="input" style="width:120px" data-k="bridgePort" data-num="1" value="${esc(s.bridgePort)}">`)}
     </div>`;
-  $('#openExt').onclick = () => api.open(extDir);
-  $('#copyExt').onclick = async () => { await api.copy(extDir); toast('success', 'Caminho copiado.'); };
+  // Recopia antes (caso a pasta tenha sido apagada) e usa o caminho atualizado
+  const ensureExt = async () => {
+    const r = await api.ext.sync();
+    state.info.extensionDir = r.dir;
+    if (r.error) toast('warn', `Não consegui preparar a pasta da extensão: ${r.error}`);
+    return r.dir;
+  };
+  $('#openExt').onclick = async () => api.open(await ensureExt());
+  $('#copyExt').onclick = async () => { await api.copy(await ensureExt()); toast('success', isMac ? 'Caminho copiado. Na janela do Chrome, use ⌘⇧G e cole.' : 'Caminho copiado.'); };
+  api.ext.browsers().then((list) => {
+    const box = $('#extBrowsers');
+    if (!box) return;
+    box.innerHTML = list.length
+      ? list.map((x) => `<button class="btn sm" data-br="${x.id}">${ic('external', 13)} Abrir no ${esc(x.name)}</button>`).join('')
+      : `<span class="muted" style="font-size:12.5px">Digite <span class="inline-code">chrome://extensions</span> na barra de endereço</span><button class="btn sm ghost" data-copyurl="chrome://extensions">${ic('copy', 12)} Copiar</button>`;
+    $$('[data-br]', box).forEach((btn) => (btn.onclick = async () => {
+      await ensureExt();
+      const r = await api.ext.openBrowser(btn.dataset.br);
+      if (r.ok) toast('success', `Abrindo ${r.url} no ${r.name}. Se não abrir, digite o endereço na barra.`);
+      else toast('error', r.error);
+    }));
+    $$('[data-copyurl]', box).forEach((btn) => (btn.onclick = async () => { await api.copy(btn.dataset.copyurl); toast('success', 'Endereço copiado. Cole na barra do navegador.'); }));
+  });
   $('#copyTok').onclick = async () => { await api.copy(s.bridgeToken); toast('success', 'Código copiado. Cole na extensão.'); };
   $('#newTok').onclick = async () => {
     if (!(await confirmDialog('Gerar novo código?', 'A extensão precisará ser pareada novamente com o novo código.', 'Gerar'))) return;

@@ -18,6 +18,14 @@ const { runAI, engineOf, ENGINES } = require('./ai');
 const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
 const F = require('./folders');
+const { FOLDER_NAME: EXT_FOLDER, syncExtension, findBrowsers, openExtensionsPage } = require('./extension');
+
+let extInfo = { dir: null, version: null };
+function syncExtensionCopy() {
+  const r = syncExtension(resourcePath('extension'), path.join(app.getPath('documents'), EXT_FOLDER));
+  if (r.error) console.warn('Extensão: não consegui copiar para Documentos:', r.error);
+  return r;
+}
 
 const isMac = process.platform === 'darwin';
 const ROOT = path.join(__dirname, '..', '..');
@@ -633,7 +641,11 @@ function setupIpc() {
   });
 
   // App
-  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, extensionDir: resourcePath('extension'), userData: app.getPath('userData') }));
+  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, extensionDir: extInfo.dir, extensionVersion: extInfo.version, extensionError: extInfo.error || null, userData: app.getPath('userData') }));
+  // Extensão do navegador: recopia antes de abrir (caso a pasta tenha sido apagada) e abre a página de extensões
+  ipcMain.handle('ext:sync', () => { extInfo = syncExtensionCopy(); return extInfo; });
+  ipcMain.handle('ext:browsers', () => findBrowsers().map(({ id, name, url }) => ({ id, name, url })));
+  ipcMain.handle('ext:openBrowser', (_e, id) => openExtensionsPage(id));
   ipcMain.handle('settings:get', () => store.get());
   ipcMain.handle('settings:set', (_e, patch) => {
     patch = { ...patch };
@@ -927,6 +939,7 @@ app.on('will-quit', () => globalShortcut.unregisterAll());
 
 app.whenReady().then(async () => {
   store = new Store();
+  extInfo = syncExtensionCopy();
   library = new Library(store);
   pipeline = new Pipeline(library, store);
   bridge = new Bridge(store, app.getVersion());

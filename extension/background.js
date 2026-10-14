@@ -19,7 +19,7 @@ async function call(path, body) {
     const r = await fetch(`http://127.0.0.1:${port}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-MeetRec-Token': token },
-      body: JSON.stringify({ browser: browserName(), ...body }),
+      body: JSON.stringify({ browser: browserName(), ext: chrome.runtime.getManifest().version, ...body }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) status = { ok: false, error: r.status === 401 ? 'Código de pareamento incorreto' : `Erro ${r.status}`, at: Date.now() };

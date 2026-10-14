@@ -211,10 +211,14 @@ Pelo popup da extensão também dá para **iniciar/parar a gravação** e **marc
 
 ### Instalar
 
-1. Baixe `MeetRec-<versão>-browser-extension.zip` da [release](https://github.com/luiscriativo/meetrec/releases/latest) e descompacte. Ou, no app, vá em **Configurações → Integrações → Abrir pasta da extensão**.
-2. Abra `chrome://extensions` (ou `edge://extensions`) e ative o **Modo do desenvolvedor**.
-3. Clique em **Carregar sem compactação** e selecione a pasta da extensão.
+O MeetRec mantém uma cópia da extensão em **Documentos/MeetRec - Extensão do navegador**, atualizada sozinha a cada versão do app. Não é preciso baixar nada, e a pasta fica fora do app. No Mac isso evita o problema de o Chrome não deixar escolher uma pasta dentro do `MeetRec.app`.
+
+1. Em **Configurações → Integrações**, clique em **Abrir no Chrome**, **Abrir no Edge** ou **Abrir no Brave**. O app abre a página de extensões do navegador.
+2. Ative o **Modo do desenvolvedor**.
+3. Clique em **Carregar sem compactação** e escolha a pasta da extensão. Use **Copiar caminho**; no Mac, na janela de escolher pasta, aperte **⌘ ⇧ G** e cole.
 4. Clique no ícone do MeetRec na barra do navegador e cole o **código de pareamento** que aparece em **Configurações → Integrações**.
+
+Quando o app é atualizado e a extensão instalada no navegador fica numa versão anterior, **Integrações** avisa: basta clicar em **↻** no cartão do MeetRec, na página de extensões. O `MeetRec-<versão>-browser-extension.zip` continua em cada [release](https://github.com/luiscriativo/meetrec/releases/latest), para quem preferir baixar.
 
 ![Integrações](docs/screenshots/settings-integrations.png)
 
@@ -336,6 +340,7 @@ src/
 │  ├─ ai.js              escolhe o motor do resumo (Claude Code ou Codex CLI)
 │  ├─ claude.js          integração com o Claude Code CLI (stream-json)
 │  ├─ codex.js           integração com o Codex CLI (codex exec --json)
+│  ├─ extension.js       cópia da extensão em Documentos e atalho para a página de extensões
 │  ├─ bridge.js          servidor local (127.0.0.1) da extensão
 │  ├─ detector.js        detecta apps de reunião usando o microfone
 │  ├─ diagnostics.js     verificações e instalação do motor local

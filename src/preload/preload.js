@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('api', {
   diag: { run: inv('diag:run'), action: inv('diag:action') },
   update: { status: inv('update:status'), check: inv('update:check'), download: inv('update:download'), install: inv('update:install') },
   bridgeStatus: inv('bridge:status'),
+  ext: { sync: inv('ext:sync'), browsers: inv('ext:browsers'), openBrowser: inv('ext:openBrowser') },
   detectorApps: inv('detector:apps'),
 
   // Usado pela janela de gravação (oculta)
