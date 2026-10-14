@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { syncExtension, browserCandidates } = require('../src/main/extension');
+const { syncExtension } = require('../src/main/extension');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'meetrec-ext-')); }
 function write(dir, rel, txt) { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), txt); }
@@ -44,13 +44,4 @@ test('syncExtension devolve a pasta original quando não consegue copiar', () =>
   const r = syncExtension(src, path.join(tmp(), 'x'));
   assert.equal(r.dir, src);
   assert.ok(r.error);
-});
-
-test('browserCandidates cobre Chrome, Edge e Brave em cada sistema', () => {
-  for (const p of ['win32', 'darwin', 'linux']) {
-    const list = browserCandidates(p, { ProgramFiles: 'C:\\PF', LOCALAPPDATA: 'C:\\L', HOME: '/Users/x' });
-    assert.deepEqual(list.map((b) => b.id), ['chrome', 'edge', 'brave']);
-    assert.ok(list.every((b) => b.paths.length && /:\/\/extensions$/.test(b.url)));
-  }
-  assert.equal(browserCandidates('darwin', { HOME: '/Users/x' })[0].app, 'Google Chrome');
 });

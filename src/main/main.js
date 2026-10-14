@@ -18,7 +18,7 @@ const { runAI, engineOf, ENGINES } = require('./ai');
 const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
 const F = require('./folders');
-const { FOLDER_NAME: EXT_FOLDER, syncExtension, findBrowsers, openExtensionsPage } = require('./extension');
+const { FOLDER_NAME: EXT_FOLDER, syncExtension } = require('./extension');
 
 let extInfo = { dir: null, version: null };
 function syncExtensionCopy() {
@@ -34,7 +34,10 @@ const page = (f) => path.join(ROOT, 'src', 'renderer', f);
 
 if (isMac) app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacCatapLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-if (process.platform === 'win32') app.setAppUserModelId('com.luiscriativo.meetrec');
+// Identidade do app no Windows: precisa ser igual ao appId do electron-builder (é o que o instalador grava
+// nos atalhos). Assim a barra de tarefas e as notificações usam o ícone e o nome do MeetRec. A versão de
+// desenvolvimento (electron.exe) usa outra identidade para não misturar o ícone do Electron com o do app.
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'io.github.luiscriativo.meetrec' : 'io.github.luiscriativo.meetrec.dev');
 
 // Desenvolvimento: perfil separado (ex.: dados de demonstração para os prints do README)
 const devProfile = !app.isPackaged && process.argv.find((a) => a.startsWith('--user-data='));
@@ -642,10 +645,8 @@ function setupIpc() {
 
   // App
   ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, extensionDir: extInfo.dir, extensionVersion: extInfo.version, extensionError: extInfo.error || null, userData: app.getPath('userData') }));
-  // Extensão do navegador: recopia antes de abrir (caso a pasta tenha sido apagada) e abre a página de extensões
+  // Extensão do navegador: recopia antes de abrir (caso a pasta tenha sido apagada)
   ipcMain.handle('ext:sync', () => { extInfo = syncExtensionCopy(); return extInfo; });
-  ipcMain.handle('ext:browsers', () => findBrowsers().map(({ id, name, url }) => ({ id, name, url })));
-  ipcMain.handle('ext:openBrowser', (_e, id) => openExtensionsPage(id));
   ipcMain.handle('settings:get', () => store.get());
   ipcMain.handle('settings:set', (_e, patch) => {
     patch = { ...patch };
