@@ -168,6 +168,12 @@ jobs:
       - name: Versão ${{ needs.prepare.outputs.version }}
         # Só nesta máquina: o commit da versão é feito no fim, se tudo passar
         run: npm version ${{ needs.prepare.outputs.version }} --no-git-tag-version --allow-same-version
+      - name: Versão da extensão do navegador
+        # A extensão dentro do app leva a mesma versão: o app compara com a instalada no navegador
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node -e "const f='extension/manifest.json';const m=require('./'+f);m.version=process.env.VERSION;require('fs').writeFileSync(f,JSON.stringify(m,null,2)+'\n')"
       - name: Empacotar
         run: npx electron-builder ${{ matrix.args }} --publish never
       - uses: actions/upload-artifact@v4

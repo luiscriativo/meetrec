@@ -108,6 +108,9 @@ class Bridge extends EventEmitter {
     this.state.lastSeen = Date.now();
     this.state.connected = true;
     if (data.browser) this.state.browser = data.browser;
+    // Versão da extensão instalada no navegador (as anteriores à 1.0.2 não enviam: ficam como "antiga")
+    const ext = typeof data.ext === 'string' ? data.ext : 'antiga';
+    if (ext !== this.state.extVersion) { this.state.extVersion = ext; if (!first) this.emit('status', this.status()); }
     if (first) this.emit('status', this.status());
   }
 
