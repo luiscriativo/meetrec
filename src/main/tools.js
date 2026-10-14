@@ -1,4 +1,4 @@
-// Localiza e executa ferramentas externas: ffmpeg, Python e Claude Code CLI.
+// Localiza e executa ferramentas externas: ffmpeg, Python e os CLIs de IA (Claude Code, Codex).
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -59,25 +59,30 @@ async function loginShellWhich(name) {
 
 let cache = {};
 
-async function findClaude(custom) {
+// Localiza um CLI de IA (claude, codex). No Windows só serve .exe/.cmd/.bat: o npm também cria
+// um script sem extensão (para o Git Bash) que o `where` lista e que não dá para executar daqui.
+async function findCli(name, custom, extra = []) {
   if (custom && fs.existsSync(custom)) return custom;
-  if (cache.claude) return cache.claude;
+  if (cache[name]) return cache[name];
   const home = os.homedir();
   const candidates = [
-    ...(await whichAll('claude')),
-    ...(await loginShellWhich('claude')),
-    path.join(home, '.local', 'bin', isWin ? 'claude.exe' : 'claude'),
-    path.join(home, '.claude', 'local', isWin ? 'claude.exe' : 'claude'),
-    isWin ? path.join(process.env.APPDATA || '', 'npm', 'claude.cmd') : '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-  ];
+    ...(await whichAll(name)),
+    ...(await loginShellWhich(name)),
+    path.join(home, '.local', 'bin', isWin ? `${name}.exe` : name),
+    ...extra,
+    isWin ? path.join(process.env.APPDATA || '', 'npm', `${name}.cmd`) : `/usr/local/bin/${name}`,
+    `/opt/homebrew/bin/${name}`,
+  ].filter((c) => c && (!isWin || /\.(exe|cmd|bat)$/i.test(c)));
   // Prefere .exe a .cmd no Windows
   candidates.sort((a, b) => (/\.exe$/i.test(b) ? 1 : 0) - (/\.exe$/i.test(a) ? 1 : 0));
   for (const c of candidates) {
-    if (c && fs.existsSync(c)) { cache.claude = c; return c; }
+    if (fs.existsSync(c)) { cache[name] = c; return c; }
   }
   return null;
 }
+
+const findClaude = (custom) => findCli('claude', custom, [path.join(os.homedir(), '.claude', 'local', isWin ? 'claude.exe' : 'claude')]);
+const findCodex = (custom) => findCli('codex', custom);
 
 async function findPython(custom) {
   if (custom) {
@@ -119,4 +124,4 @@ async function probeAudio(file) {
   return { duration, maxVolume: mv ? +mv[1] : -91, meanVolume: meanv ? +meanv[1] : -91, ok: r.code === 0, err: r.code === 0 ? '' : txt.slice(-600) };
 }
 
-module.exports = { ffmpegPath, resourcePath, run, findClaude, findPython, needsShell, clearCache, probeAudio, isWin, execFile };
+module.exports = { ffmpegPath, resourcePath, run, findClaude, findCodex, findPython, needsShell, clearCache, probeAudio, isWin, execFile };

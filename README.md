@@ -6,7 +6,7 @@
 
 **Grave suas reuniões, transcreva e receba o resumo pronto, escrito pelo Claude.**
 
-*Teams, Google Meet, Zoom, navegador ou qualquer app: o MeetRec grava sua voz e o som do computador, transcreve com o Whisper e gera notas de reunião no estilo do Notion com o [Claude Code](https://docs.claude.com/en/docs/claude-code/overview).*
+*Teams, Google Meet, Zoom, navegador ou qualquer app: o MeetRec grava sua voz e o som do computador, transcreve com o Whisper e gera notas de reunião no estilo do Notion com o [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) ou o [Codex CLI](https://developers.openai.com/codex/cli), usando o login da sua conta.*
 
 <br />
 
@@ -75,6 +75,9 @@ Escreva notas e marque momentos enquanto grava. O Claude leva os dois em conta n
 - **Copiar para o Teams** com um clique, sem Markdown quebrado. Também dá para editar, gerar de novo ou exportar em `.md`.
 - Os **itens de ação** viram uma checklist com responsável.
 
+**🔀 Claude Code ou Codex CLI: você escolhe**
+Em **Configurações → Resumo (IA)**, escolha qual CLI escreve os resumos: o **Claude Code**, com a conta Claude Pro/Max, ou o **Codex CLI**, com a conta ChatGPT Plus/Pro. Nos dois casos o app usa o CLI instalado no seu PC, já logado, sem chave de API. Pontos de dúvida, pastas, perguntas e a skill `resumo-reuniao` funcionam igual nos dois.
+
 **💬 Pergunte ao Claude sobre a reunião**
 "O que ficou pendente para mim?", "Escreva um e-mail de follow-up", "Quais riscos foram levantados?". O Claude responde com base na transcrição e cita os horários.
 
@@ -136,7 +139,7 @@ flowchart LR
 1. **Gravação**: o microfone e o som do sistema (loopback) são gravados em faixas separadas e numa faixa mixada para ouvir.
 2. **Transcrição**: cada faixa passa pelo Whisper, rodando no seu PC ou na nuvem (veja [motores](#-motores-de-transcrição)).
 3. **Falantes**: o que veio do microfone é você, e o que veio do sistema são os participantes. O eco é descartado, e os eventos da extensão dão nome a cada fala.
-4. **Resumo**: o MeetRec chama o Claude Code instalado no seu computador (`claude -p`), já logado na sua conta, e mostra o texto conforme ele é escrito.
+4. **Resumo**: o MeetRec chama o CLI escolhido, instalado no seu computador e já logado na sua conta: o Claude Code (`claude -p`), que mostra o texto conforme é escrito, ou o Codex CLI (`codex exec`), em modo somente leitura.
 
 > **Por que não transcrever direto com o Claude?** O Claude lê texto e imagens, mas não áudio. O Whisper transcreve o áudio e o Claude entende o texto.
 
@@ -158,7 +161,7 @@ Baixe o instalador do seu sistema na **[última versão](https://github.com/luis
 
 | Para | Você precisa de |
 |---|---|
-| Resumos e perguntas | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) instalado e logado (`npm i -g @anthropic-ai/claude-code`, depois rode `claude` uma vez) |
+| Resumos e perguntas | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) instalado e logado (`npm i -g @anthropic-ai/claude-code`, depois rode `claude` uma vez) **ou** [Codex CLI](https://developers.openai.com/codex/cli) instalado e logado (`npm i -g @openai/codex`, depois `codex login` com sua conta ChatGPT) |
 | Transcrição local | Python 3.9+. O pacote `faster-whisper` é instalado pela tela **Diagnóstico** |
 | Transcrição na nuvem | Uma chave do [Groq](https://console.groq.com/keys) (rápido, plano gratuito) ou da [OpenAI](https://platform.openai.com/api-keys) |
 
@@ -270,7 +273,7 @@ Se existir a skill `~/.claude/skills/resumo-reuniao/SKILL.md`, o MeetRec usa o f
 ☐ Carlos Lima: validar os dados importados até sexta-feira.
 ```
 
-Em **Configurações → Resumo** você escolhe o modelo do Claude (Sonnet, Opus ou Haiku) e adiciona instruções próprias, como "destaque riscos" ou "escreva em inglês".
+Em **Configurações → Resumo (IA)** você escolhe o motor (Claude Code ou Codex CLI), o modelo (no Claude: Sonnet, Opus ou Haiku; no Codex: o padrão ou um modelo da sua conta, além do esforço de raciocínio) e adiciona instruções próprias, como "destaque riscos" ou "escreva em inglês".
 
 ---
 
@@ -279,7 +282,7 @@ Em **Configurações → Resumo** você escolhe o modelo do Claude (Sonnet, Opus
 - Cada reunião fica numa pasta em `Documentos/MeetRec - Reuniões/[sua pasta/]<data>/`, com `meta.json`, os áudios (`mic.webm`, `system.webm`, `mix.webm`), `transcript.json`/`.txt` e `summary.md`. É só abrir, copiar ou fazer backup.
 - Cada pasta que você cria tem uma subpasta `_contexto/` com `pasta.json` e cópias legíveis: `CONTEXTO.md`, `GLOSSARIO.md` e `HISTORICO.md`. Assim você também pode abrir a pasta direto no Claude Code e conversar sobre todas as reuniões do assunto. O glossário geral, das reuniões sem pasta, fica em `_contexto/` na raiz.
 - O que sai do computador:
-  - **a transcrição em texto** vai para o Claude, pelo seu Claude Code;
+  - **a transcrição em texto** vai para a Anthropic (Claude Code) ou para a OpenAI (Codex CLI), conforme o motor escolhido;
   - **o áudio** vai para a nuvem **só** se você escolher Groq ou OpenAI.
 - As chaves de API ficam **criptografadas** pelo sistema operacional (`safeStorage`).
 
@@ -330,7 +333,9 @@ src/
 │  ├─ pipeline.js        fila: áudio → transcrição → falantes → resumo
 │  ├─ transcribe.js      Whisper local (faster-whisper) e nuvem (Groq/OpenAI)
 │  ├─ speakers.js        junta as faixas, remove eco, dá nome às falas
+│  ├─ ai.js              escolhe o motor do resumo (Claude Code ou Codex CLI)
 │  ├─ claude.js          integração com o Claude Code CLI (stream-json)
+│  ├─ codex.js           integração com o Codex CLI (codex exec --json)
 │  ├─ bridge.js          servidor local (127.0.0.1) da extensão
 │  ├─ detector.js        detecta apps de reunião usando o microfone
 │  ├─ diagnostics.js     verificações e instalação do motor local
@@ -378,7 +383,9 @@ Os arquivos seguem o padrão `MeetRec-<versão>-<sistema>-<arquitetura>`, por ex
 |---|---|
 | "Nenhum som do computador foi captado" | macOS: libere *Gravação de Tela e Áudio do Sistema*. Linux: escolha o dispositivo "Monitor of …". Windows: confira se o som da reunião sai neste PC. |
 | "O Claude Code não está autenticado" | Abra um terminal, rode `claude` e faça login. |
-| "Claude Code CLI não encontrado" | Instale com `npm i -g @anthropic-ai/claude-code` ou informe o caminho em *Configurações → Resumo*. |
+| "Claude Code CLI não encontrado" | Instale com `npm i -g @anthropic-ai/claude-code` ou informe o caminho em *Configurações → Resumo (IA)*. |
+| "Codex CLI não encontrado" / "não está autenticado" | Instale com `npm i -g @openai/codex`, rode `codex login` num terminal e entre com sua conta ChatGPT. Depois clique em **Testar** em *Configurações → Resumo (IA)*. |
+| "Limite de uso atingido" | Espere o limite da sua assinatura renovar ou troque de motor em *Configurações → Resumo (IA)*. |
 | Transcrição local lenta | Use um modelo menor, o Groq, ou o modo "só gravar" + **Processar pendentes**. |
 | Minha voz aparece duplicada | Use fones de ouvido. O MeetRec já remove o eco, mas caixas de som muito altas podem escapar. |
 | Extensão "desconectada" | O app precisa estar aberto, e o código de pareamento tem que ser o mesmo (*Configurações → Integrações*). |

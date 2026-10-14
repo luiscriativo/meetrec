@@ -1,5 +1,5 @@
-// Tela de uma reunião: status do processamento, player, resumo, transcrição, ações, chat com o Claude e notas.
-import { state, ctx, api } from '../ctx.js';
+// Tela de uma reunião: status do processamento, player, resumo, transcrição, ações, chat com a IA e notas.
+import { state, ctx, api, aiName } from '../ctx.js';
 import { $, $$, ic, esc, fmtTime, fmtDuration, fmtDate, colorFor, initials, toast, confirmDialog, promptDialog, popMenu, debounce } from '../util.js';
 import { pickFolderDialog, moveMeeting } from '../folders-ui.js';
 
@@ -21,7 +21,7 @@ const STEPS = [
   ['audio', 'Preparar áudio', 'waves'],
   ['transcribe', 'Transcrever', 'fileText'],
   ['speakers', 'Identificar falantes', 'users'],
-  ['summary', 'Resumo com Claude', 'sparkles'],
+  ['summary', 'Resumo com IA', 'sparkles'],
 ];
 
 export function topbar(route) {
@@ -78,7 +78,7 @@ function renderHead() {
     <div class="grow">
       <input class="m-title" id="mTitle" value="${esc(m.title)}" title="Clique para renomear">
       <div class="m-meta">
-        <button class="folder-chip ${m.folder ? '' : 'none'}" id="folderChip" title="${m.folder ? 'O resumo usa o contexto, o glossário e o histórico desta pasta. Clique para mover.' : 'Coloque numa pasta para o Claude usar o contexto das reuniões do mesmo assunto'}">${ic('folder', 13)} ${m.folder ? esc(m.folder) : 'Sem pasta — mover…'}</button>
+        <button class="folder-chip ${m.folder ? '' : 'none'}" id="folderChip" title="${m.folder ? 'O resumo usa o contexto, o glossário e o histórico desta pasta. Clique para mover.' : 'Coloque numa pasta para a IA usar o contexto das reuniões do mesmo assunto'}">${ic('folder', 13)} ${m.folder ? esc(m.folder) : 'Sem pasta — mover…'}</button>
         <span>${ic('calendar', 14)} ${fmtDate(m.createdAt)}</span>
         ${m.duration ? `<span>${ic('clock', 14)} ${fmtDuration(m.duration)}</span>` : ''}
         ${m.platform ? `<span>${ic('globe', 14)} ${esc(m.platform)}</span>` : ''}
@@ -146,7 +146,7 @@ async function askMove() {
   renderHead();
   await renderPlayer();
   if (t && audio()) audio().currentTime = t;
-  if (ok && data.summary && dest) toast('info', 'Gere o resumo novamente para o Claude usar o contexto da nova pasta.', { action: { label: 'Gerar novamente', onClick: () => api.pipe.process(id, 'summary') } });
+  if (ok && data.summary && dest) toast('info', `Gere o resumo novamente para o ${aiName()} usar o contexto da nova pasta.`, { action: { label: 'Gerar novamente', onClick: () => api.pipe.process(id, 'summary') } });
 }
 
 async function copySummary() {
@@ -283,7 +283,7 @@ function renderTabs() {
     ['summary', 'sparkles', 'Resumo', openDoubts ? `<span title="Pontos de dúvida abertos" style="display:inline-flex;align-items:center;gap:3px">${ic('help', 11)}${openDoubts}</span>` : ''],
     ['transcript', 'fileText', 'Transcrição', segs],
     ['actions', 'checkCircle', 'Itens de ação', acts],
-    ['ask', 'message', 'Perguntar ao Claude', ''],
+    ['ask', 'message', `Perguntar ao ${aiName()}`, ''],
     ['notes', 'note', 'Notas e marcações', (data.meta.markers?.length || 0) + (data.meta.notes?.trim() ? 1 : 0) || ''],
   ];
   $('#tabs').innerHTML = t.map(([k, i, l, c]) => `<button data-t="${k}" class="${tab === k ? 'active' : ''}">${ic(i, 15)}${l}${c ? `<span class="count">${c}</span>` : ''}</button>`).join('');
@@ -302,7 +302,7 @@ function renderSummary(el) {
   const stream = state.summaryStream[id];
   const processing = m.status === 'processing';
   if (processing && stream) {
-    el.innerHTML = `<div class="doc-tools"><span class="chip accent">${ic('sparkles', 12)} O Claude está escrevendo…</span></div><div class="card doc streaming" id="docStream">${esc(stream)}</div>`;
+    el.innerHTML = `<div class="doc-tools"><span class="chip accent">${ic('sparkles', 12)} O ${aiName()} está escrevendo…</span></div><div class="card doc streaming" id="docStream">${esc(stream)}</div>`;
     return;
   }
   if (editing) {
@@ -323,7 +323,7 @@ function renderSummary(el) {
       </div>
       <div class="card doc">${esc(data.summary)}</div>
       <div class="doc-foot">
-        ${s.generatedAt ? `<span>${ic('sparkles', 12)} Gerado pelo Claude Code${s.model ? ` (${esc(s.model)})` : ''} em ${fmtDate(s.generatedAt)}</span>` : ''}
+        ${s.generatedAt ? `<span>${ic('sparkles', 12)} Gerado pelo ${s.engine === 'codex' ? 'Codex CLI' : 'Claude Code'}${s.model ? ` (${esc(s.model)})` : ''} em ${fmtDate(s.generatedAt)}</span>` : ''}
         ${s.durationMs ? `<span>${ic('clock', 12)} ${Math.round(s.durationMs / 1000)}s</span>` : ''}
         ${s.costUsd != null ? `<span>US$ ${Number(s.costUsd).toFixed(3)}</span>` : ''}
       </div>
@@ -336,12 +336,12 @@ function renderSummary(el) {
     return;
   }
   if (processing) {
-    el.innerHTML = `<div class="card card-pad empty"><div class="big">${ic('sparkles', 28)}</div><h3>O resumo aparecerá aqui</h3><div>Assim que a transcrição terminar, o Claude Code começa a escrever — você verá o texto surgindo em tempo real.</div></div>`;
+    el.innerHTML = `<div class="card card-pad empty"><div class="big">${ic('sparkles', 28)}</div><h3>O resumo aparecerá aqui</h3><div>Assim que a transcrição terminar, o ${aiName()} começa a escrever — você verá o texto surgindo em tempo real.</div></div>`;
     return;
   }
   const hasTr = data.transcript?.segments?.length;
   el.innerHTML = `<div class="card card-pad empty"><div class="big">${ic('sparkles', 28)}</div><h3>Sem resumo ainda</h3>
-    <div style="margin-bottom:14px">${hasTr ? 'A transcrição está pronta. Gere o resumo com o Claude Code.' : 'Transcreva a reunião para gerar o resumo.'}</div>
+    <div style="margin-bottom:14px">${hasTr ? 'A transcrição está pronta. Gere o resumo com o ${aiName()}.' : 'Transcreva a reunião para gerar o resumo.'}</div>
     <button class="btn primary" id="mk">${ic('sparkles', 14)} ${hasTr ? 'Gerar resumo' : 'Transcrever e resumir'}</button></div>`;
   $('#mk').onclick = () => api.pipe.process(id, hasTr ? 'summary' : 'audio');
 }
@@ -374,8 +374,8 @@ function doubtsHtml() {
     if (!s.generatedAt) return '';
     // Resumos de antes desta versão não têm a lista (doubts ausente) — não dá para dizer que "não houve dúvidas"
     return s.blockError || !Array.isArray(data.meta.doubts)
-      ? `<div class="doubts-empty muted">${ic('info', 13)} Este resumo não trouxe a lista de pontos de dúvida. Gere novamente para o Claude listá-los.</div>`
-      : `<div class="doubts-empty">${ic('checkCircle', 14)} O Claude não teve dúvidas sobre a transcrição desta reunião.</div>`;
+      ? `<div class="doubts-empty muted">${ic('info', 13)} Este resumo não trouxe a lista de pontos de dúvida. Gere novamente para o ${aiName()} listá-los.</div>`
+      : `<div class="doubts-empty">${ic('checkCircle', 14)} O ${s.engine === 'codex' ? 'Codex' : 'Claude'} não teve dúvidas sobre a transcrição desta reunião.</div>`;
   }
   const open = list.filter((d) => d.status === 'open');
   const done = list.filter((d) => d.status !== 'open');
@@ -415,7 +415,7 @@ function doubtsHtml() {
     <div class="doubts-head">
       <span class="dh-ico">${ic('help', 17)}</span>
       <div class="grow"><b>Pontos de dúvida</b> ${open.length ? `<span class="chip warn">${open.length} ${open.length === 1 ? 'aberto' : 'abertos'}</span>` : `<span class="chip ok">${ic('check', 11)} tudo revisado</span>`}
-        <div class="muted" style="font-size:12.5px;margin-top:2px">O Claude não teve certeza destes trechos. Ouça, corrija — e as próximas reuniões${folder ? ' desta pasta' : ''} já vêm melhores.</div></div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">A IA não teve certeza destes trechos. Ouça, corrija — e as próximas reuniões${folder ? ' desta pasta' : ''} já vêm melhores.</div></div>
     </div>
     ${changedSince ? `<div class="banner info regen-banner">${ic('sparkles', 16)}<div class="grow">Suas correções ainda não estão no resumo.</div><button class="btn primary sm" id="regenFix">${ic('refresh', 13)} Refazer resumo com as correções</button></div>` : ''}
     ${open.map(card).join('')}
@@ -533,7 +533,7 @@ function highlightSegment(t) {
 function renderActions(el) {
   const acts = data.meta.actions || [];
   if (!acts.length) {
-    el.innerHTML = `<div class="card card-pad empty"><div class="big">${ic('checkCircle', 28)}</div><h3>Nenhum item de ação</h3><div>${data.summary ? 'O resumo não trouxe tarefas com responsável.' : 'Os itens de ação são extraídos do resumo gerado pelo Claude.'}</div></div>`;
+    el.innerHTML = `<div class="card card-pad empty"><div class="big">${ic('checkCircle', 28)}</div><h3>Nenhum item de ação</h3><div>${data.summary ? 'O resumo não trouxe tarefas com responsável.' : 'Os itens de ação são extraídos do resumo gerado pela IA.'}</div></div>`;
     return;
   }
   const done = acts.filter((a) => a.done).length;
@@ -547,7 +547,7 @@ function renderActions(el) {
   $('#cpAct').onclick = async () => { await api.copy(acts.map((a) => `${a.done ? '☑' : '☐'} ${a.owner ? a.owner + ': ' : ''}${a.text}`).join('\n')); toast('success', 'Lista copiada.'); };
 }
 
-// Perguntar ao Claude
+// Perguntar à IA
 const SUGGESTIONS = [
   'Quais decisões foram tomadas?',
   'O que ficou pendente para mim?',
@@ -564,9 +564,9 @@ function renderAsk(el) {
     return;
   }
   el.innerHTML = `<div class="chat" id="chat">
-      ${chat.length ? '' : `<div class="muted" style="text-align:center;margin:10px 0 4px">${ic('sparkles', 22)}<div style="margin-top:8px">Pergunte qualquer coisa sobre esta reunião. O Claude responde com base na transcrição.</div></div><div class="sugs" style="justify-content:center">${SUGGESTIONS.map((s) => `<button class="sug">${esc(s)}</button>`).join('')}</div>`}
+      ${chat.length ? '' : `<div class="muted" style="text-align:center;margin:10px 0 4px">${ic('sparkles', 22)}<div style="margin-top:8px">Pergunte qualquer coisa sobre esta reunião. O ${aiName()} responde com base na transcrição.</div></div><div class="sugs" style="justify-content:center">${SUGGESTIONS.map((s) => `<button class="sug">${esc(s)}</button>`).join('')}</div>`}
       ${chat.map((c) => `<div class="msg ${c.role}">${c.role === 'error' ? ic('alertCircle', 14) + ' ' : ''}${esc(c.text)}${c.role === 'assistant' ? `<div style="margin-top:6px"><button class="btn sm ghost cp" data-t="${esc(c.text)}">${ic('copy', 12)} Copiar</button></div>` : ''}</div>`).join('')}
-      ${asking ? `<div class="msg assistant" id="streamMsg">${askText ? esc(askText) : `<span class="row muted" style="gap:8px">${ic('loader', 14, 'spin')} O Claude está lendo a reunião…</span>`}</div>` : ''}
+      ${asking ? `<div class="msg assistant" id="streamMsg">${askText ? esc(askText) : `<span class="row muted" style="gap:8px">${ic('loader', 14, 'spin')} O ${aiName()} está lendo a reunião…</span>`}</div>` : ''}
     </div>
     <div class="chat-input"><textarea class="textarea" id="askIn" rows="1" placeholder="Pergunte algo… (Enter envia, Shift+Enter quebra linha)" ${asking ? 'disabled' : ''}></textarea><button class="btn primary" id="askBtn" style="height:44px" ${asking ? 'disabled' : ''}>${ic('send', 15)}</button></div>`;
   const send = async (q) => {
@@ -596,7 +596,7 @@ function renderNotes(el) {
   const markers = [...(m.markers || [])].sort((a, b) => a.t - b.t);
   el.innerHTML = `
     <div class="section-title" style="margin-top:0">${ic('note', 14)} Anotações</div>
-    <textarea class="textarea" id="notes" rows="8" placeholder="Suas anotações sobre a reunião. O Claude considera este texto ao gerar o resumo.">${esc(m.notes || '')}</textarea>
+    <textarea class="textarea" id="notes" rows="8" placeholder="Suas anotações sobre a reunião. A IA considera este texto ao gerar o resumo.">${esc(m.notes || '')}</textarea>
     <div class="muted" id="nsaved" style="font-size:11.5px;margin-top:4px;height:14px"></div>
     <div class="section-title">${ic('flag', 14)} Momentos marcados</div>
     ${markers.length ? `<div class="card" style="padding:6px">${markers.map((mk, i) => `<div class="seg" style="grid-template-columns:70px 1fr auto;align-items:center"><span class="ts" data-t="${mk.t}">${ic('play', 10)} ${fmtTime(mk.t)}</span><span>${esc(mk.label || 'Momento importante')}</span><button class="btn sm ghost" data-ed="${i}">${ic('edit', 13)}</button></div>`).join('')}</div>`

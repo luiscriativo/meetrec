@@ -1,11 +1,12 @@
-// Pipeline pós-gravação: preparar áudio → transcrever → identificar falantes → resumir (Claude Code).
+// Pipeline pós-gravação: preparar áudio → transcrever → identificar falantes → resumir (Claude Code ou Codex CLI).
 const fs = require('fs');
 const os = require('os');
 const { EventEmitter } = require('events');
 const { ffmpegPath, run, probeAudio } = require('./tools');
 const { transcribe, UserError } = require('./transcribe');
 const { buildTranscript, transcriptToText, fmtTime } = require('./speakers');
-const { runClaude, readSkill } = require('./claude');
+const { readSkill } = require('./claude');
+const { runAI, engineName } = require('./ai');
 const { STEP_NAMES } = require('./library');
 const F = require('./folders');
 
@@ -269,7 +270,7 @@ class Pipeline extends EventEmitter {
     const total = weights.reduce((a, b) => a + b, 0);
     const raw = {};
     let done = 0;
-    const engineName = settings.engine === 'local' ? `Whisper local (${settings.localModel})` : settings.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
+    const engineLabel = settings.engine === 'local' ? `Whisper local (${settings.localModel})` : settings.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
     for (let i = 0; i < jobs.length; i++) {
       const t = jobs[i];
       const label = t === 'mic' ? 'sua voz' : t === 'system' ? 'participantes' : 'áudio';
@@ -282,7 +283,7 @@ class Pipeline extends EventEmitter {
         onChild: (c) => this._setChild(c),
         onStatus: (m, code) => {
           if (code !== 'segment') lastStatus = m;
-          this._step(id, 'transcribe', { message: `${engineName} · ${label}: ${code === 'segment' ? m : lastStatus}` });
+          this._step(id, 'transcribe', { message: `${engineLabel} · ${label}: ${code === 'segment' ? m : lastStatus}` });
         },
         onProgress: (p) => {
           const overall = (done + p * weights[i]) / total;
@@ -297,7 +298,7 @@ class Pipeline extends EventEmitter {
     this.library.writeJson(id, 'transcript.raw.json', raw);
     const n = Object.values(raw).reduce((a, s) => a + s.length, 0);
     if (!n) throw new UserError('O Whisper não reconheceu nenhuma fala no áudio.');
-    return { message: `${n} trechos transcritos com ${engineName}` };
+    return { message: `${n} trechos transcritos com ${engineLabel}` };
   }
 
   // 3) Une as faixas e identifica quem falou
@@ -402,7 +403,7 @@ ${text}
 `;
     this.library.writeText(id, 'summary.prompt.txt', prompt);
     let lastEmit = 0;
-    const res = await runClaude({
+    const res = await runAI({
       prompt,
       settings,
       cwd: this.library.dir(id),
@@ -422,11 +423,11 @@ ${text}
     const parsed = F.splitSummary(res.text);
     const summaryText = parsed.summary;
     this.emit('summary-stream', { id, text: summaryText });
-    if (!summaryText) throw new UserError('O Claude retornou uma resposta vazia.');
+    if (!summaryText) throw new UserError(`O ${engineName(settings)} retornou uma resposta vazia.`);
     this.library.writeText(id, 'summary.md', summaryText);
     const { title, actions } = parseSummary(summaryText);
     const doubts = F.normalizeDoubts(parsed.data?.duvidas);
-    const patch = { summary: { generatedAt: new Date().toISOString(), model: res.model, costUsd: res.costUsd, durationMs: res.durationMs, blockError: parsed.error || (parsed.data ? null : 'sem bloco') }, actions, doubts };
+    const patch = { summary: { generatedAt: new Date().toISOString(), engine: res.engine, model: res.model, costUsd: res.costUsd, durationMs: res.durationMs, blockError: parsed.error || (parsed.data ? null : 'sem bloco') }, actions, doubts };
     if (title && this.library.get(id).titleAuto) patch.title = title;
     const m = this.library.update(id, patch);
     const folderNote = folder.name ? this._applyFolderBlock(folder.name, parsed.data, m) : '';
@@ -483,9 +484,9 @@ ${folder.description ? `Descrição dada pelo usuário: ${folder.description}\n`
 === RESUMOS ===
 ${docs}`;
     onStatus?.(`Lendo ${metas.length} ${metas.length === 1 ? 'resumo' : 'resumos'}…`);
-    const res = await runClaude({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
+    const res = await runAI({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
     const parsed = F.splitSummary(res.text.includes('```meetrec') ? res.text : '```meetrec\n' + res.text);
-    if (!parsed.data) throw new UserError('O Claude não devolveu o contexto no formato esperado. Tente de novo.');
+    if (!parsed.data) throw new UserError(`O ${engineName(settings)} não devolveu o contexto no formato esperado. Tente de novo.`);
     const last = metas[metas.length - 1];
     const note = this._applyFolderBlock(name, parsed.data, { id: last.id, title: `${metas.length} ${metas.length === 1 ? 'reunião' : 'reuniões'} da pasta` });
     return { message: note || 'Nada novo para acrescentar.' };
@@ -521,11 +522,11 @@ ${folder.history || '(vazio)'}
 
 === RESUMOS DAS REUNIÕES MAIS RECENTES ===
 ${docs || '(nenhum)'}`;
-    onStatus?.('O Claude está enxugando a memória da pasta…');
-    const res = await runClaude({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
+    onStatus?.(`O ${engineName(settings)} está enxugando a memória da pasta…`);
+    const res = await runAI({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
     const parsed = F.splitSummary(res.text.includes('```meetrec') ? res.text : '```meetrec\n' + res.text);
     const h = parsed.data?.historico;
-    if (typeof h !== 'string') throw new UserError('O Claude não devolveu o histórico no formato esperado. Tente de novo.');
+    if (typeof h !== 'string') throw new UserError(`O ${engineName(settings)} não devolveu o histórico no formato esperado. Tente de novo.`);
     const ctx = parsed.data.contexto && typeof parsed.data.contexto === 'object' ? F.normalizeContext(parsed.data.contexto) : null;
     const slim = {
       history: F.capHistory(h).text,
@@ -555,7 +556,7 @@ ${history ? `=== CONVERSA ANTERIOR ===\n${history}\n\n` : ''}=== PERGUNTA ===
 ${question}`;
     this.library.update(id, (m) => { m.chat = [...(m.chat || []), { role: 'user', text: question, at: new Date().toISOString() }]; return m; });
     try {
-      const res = await runClaude({ prompt, settings, cwd: this.library.dir(id), onText: (_d, full) => onText?.(full) });
+      const res = await runAI({ prompt, settings, cwd: this.library.dir(id), onText: (_d, full) => onText?.(full) });
       this.library.update(id, (m) => { m.chat = [...(m.chat || []), { role: 'assistant', text: res.text, at: new Date().toISOString() }]; return m; });
       return res.text;
     } catch (e) {

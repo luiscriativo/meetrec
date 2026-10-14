@@ -101,7 +101,7 @@ async function runClaude({ prompt, settings, cwd, onText, onStatus, onChild, tim
       clearTimeout(timer);
       if (result && !result.is_error) {
         const final = (result.result || text || '').trim();
-        return resolve({ text: final, costUsd: result.total_cost_usd, durationMs: result.duration_ms, model });
+        return resolve({ text: final, costUsd: result.total_cost_usd, durationMs: result.duration_ms, model, engine: 'claude' });
       }
       if (timedOut) return reject(new UserError(`O Claude não respondeu em ${Math.round(timeoutMs / 60000)} min (tempo esgotado). Tente novamente.`, 'timeout'));
       if (code === null) return reject(new UserError('Geração cancelada.', 'cancelled'));

@@ -1,5 +1,5 @@
 // Tela inicial: gravação ao vivo (ou botão de gravar) + biblioteca de reuniões.
-import { state, ctx, api } from '../ctx.js';
+import { state, ctx, api, aiName, aiHealth } from '../ctx.js';
 import { $, $$, ic, esc, fmtTime, fmtDuration, fmtDate, dayGroup, prettyShortcut, colorFor, initials, debounce, toast } from '../util.js';
 
 let root = null;
@@ -73,7 +73,7 @@ function renderFolderHead() {
 function folderSelectHtml() {
   const cur = state.settings.recordFolder || '';
   const valid = !cur || state.folders.some((f) => f.name === cur);
-  return `<label class="save-in" title="Pasta onde a gravação será salva — o Claude usa o contexto dela no resumo">${ic('folder', 13)} Salvar em
+  return `<label class="save-in" title="Pasta onde a gravação será salva — a IA usa o contexto dela no resumo">${ic('folder', 13)} Salvar em
     <select class="select" id="saveIn"><option value="" ${!cur || !valid ? 'selected' : ''}>Sem pasta</option>${state.folders.map((f) => `<option value="${esc(f.name)}" ${f.name === cur ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="__new">+ Nova pasta…</option></select></label>`;
 }
 
@@ -114,19 +114,19 @@ async function renderLive() {
   if (!r.active) {
     const s = state.settings;
     const health = state.health || [];
-    const claude = health.find((c) => c.id === 'claude');
+    const claude = aiHealth();
     const engName = s.engine === 'local' ? `Whisper local · ${s.localModel}` : s.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
     const sugg = suggestionHtml();
     area.innerHTML = `
       <div class="card hero">
         <div style="z-index:1">
           <h2>Pronto para gravar</h2>
-          <p>O MeetRec grava <b>sua voz</b> e <b>tudo que toca no computador</b> (as pessoas da reunião), seja no navegador, no Teams, Zoom ou Meet. Ao parar, transcreve e o Claude Code gera o resumo.</p>
+          <p>O MeetRec grava <b>sua voz</b> e <b>tudo que toca no computador</b> (as pessoas da reunião), seja no navegador, no Teams, Zoom ou Meet. Ao parar, transcreve e o ${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'} gera o resumo.</p>
           <div class="sources">
             <span class="chip ${devices.mic ? 'accent' : 'err'}" title="Microfone">${ic('mic', 13)} ${esc(devices.mic || 'Nenhum microfone')}</span>
             <span class="chip ${s.captureSystem ? 'ok' : ''}" title="Som do computador">${ic('speaker', 13)} ${s.captureSystem ? 'Som do PC ativado' : 'Som do PC desativado'}</span>
             <span class="chip">${ic('waves', 13)} ${esc(engName)}</span>
-            <span class="chip ${claude ? (claude.state === 'ok' ? 'ok' : 'err') : ''}">${ic('sparkles', 13)} Claude ${claude ? (claude.state === 'ok' ? 'pronto' : 'indisponível') : '…'}</span>
+            <span class="chip ${claude ? (claude.state === 'ok' ? 'ok' : 'err') : ''}">${ic('sparkles', 13)} ${aiName()} ${claude ? (claude.state === 'ok' ? 'pronto' : 'indisponível') : '…'}</span>
           </div>
           ${folderSelectHtml()}
           <div id="sugg">${sugg}</div>
@@ -175,7 +175,7 @@ async function renderLive() {
       <div id="liveWarnings" style="margin-top:12px"></div>
       <div class="live-grid">
         <div>
-          <div class="section-title" style="margin-top:0">${ic('note', 14)} Anotações <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— o Claude considera no resumo</span></div>
+          <div class="section-title" style="margin-top:0">${ic('note', 14)} Anotações <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— a IA considera no resumo</span></div>
           <textarea class="textarea" id="liveNotes" rows="6" placeholder="Ex.: decidir orçamento até sexta; perguntar à Ana sobre o contrato…">${esc(meta?.notes || '')}</textarea>
           <div class="muted" id="notesSaved" style="font-size:11.5px;margin-top:4px;height:14px"></div>
         </div>
@@ -314,7 +314,7 @@ function renderList() {
         <div class="t">${esc(m.title)}</div>
         <div class="s">
           ${folder === undefined && m.folder ? `<span class="in-folder">${ic('folder', 12)} ${esc(m.folder)}</span>` : ''}
-          ${openDoubts ? `<span class="has-doubts" title="Pontos de dúvida do Claude esperando sua confirmação">${ic('help', 12)} ${openDoubts}</span>` : ''}
+          ${openDoubts ? `<span class="has-doubts" title="Pontos de dúvida da IA esperando sua confirmação">${ic('help', 12)} ${openDoubts}</span>` : ''}
           <span>${ic('calendar', 12)} ${fmtDate(m.createdAt)}</span>
           ${m.duration ? `<span>${ic('clock', 12)} ${fmtDuration(m.duration)}</span>` : ''}
           ${m.platform ? `<span>${ic('globe', 12)} ${esc(m.platform)}</span>` : ''}

@@ -33,10 +33,14 @@ function defaults() {
     pythonPath: '',
     vocabulary: '',
 
+    aiEngine: 'claude', // motor do resumo: claude | codex
     claudePath: '',
     claudeModel: '',
     useSkill: true,
     customInstructions: '',
+    codexPath: '',
+    codexModel: '',
+    codexEffort: '', // '' = padrão do Codex | low | medium | high
     recordFolder: '', // pasta onde novas gravações e importações são salvas ('' = Sem pasta)
 
     detectMeetings: true,
