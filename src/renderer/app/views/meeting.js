@@ -26,7 +26,7 @@ const STEPS = [
 
 export function topbar(route) {
   const m = state.list.find((x) => x.id === route.id);
-  return `<span class="crumb" id="back">${ic('chevronLeft', 16)} ${m?.folder ? `${ic('folder', 14)} ${esc(m.folder)}` : 'Reuniões'}</span><span class="muted">/</span><h1 style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m?.title || 'Reunião')}</h1>`;
+  return `<span class="crumb" id="back">${ic('chevronLeft', 16)} ${m?.folder ? `${ic('folder', 14)} <span class="clip">${esc(m.folder)}</span>` : 'Reuniões'}</span><span class="muted">/</span><h1 style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m?.title || 'Reunião')}</h1>`;
 }
 
 function bindBack() {

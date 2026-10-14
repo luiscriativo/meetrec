@@ -18,7 +18,7 @@ const folderLabel = (f) => (f === undefined ? 'Reuniões' : f === '' ? 'Sem past
 
 export function topbar(route = {}) {
   const f = route.folder;
-  return `${f !== undefined ? `<span class="crumb" id="crumbAll">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span>` : ''}<h1>${f ? ic('folder', 16) : ''}${esc(folderLabel(f))}</h1>
+  return `${f !== undefined ? `<span class="crumb" id="crumbAll">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span>` : ''}<h1 class="h1-clip" title="${esc(folderLabel(f))}">${f ? ic('folder', 16) : ''}<span>${esc(folderLabel(f))}</span></h1>
     <div class="grow"></div>
     <div class="search no-drag" style="width:280px">${ic('search', 15)}<input class="input" id="q" placeholder="${f ? `Buscar em “${esc(f)}”…` : 'Buscar em títulos, transcrições e resumos…'}" value="${esc(query)}"></div>
     <button class="btn no-drag" id="impBtn" title="Transcrever um arquivo de áudio/vídeo existente${f ? ` (vai para a pasta “${esc(f)}”)` : ''}">${ic('upload', 15)} Importar</button>`;
@@ -183,7 +183,7 @@ async function renderLive() {
         </div>
         <div class="hero-side">
           <button class="big-rec" id="bigRec" title="Começar a gravar">${ic('mic', 36)}</button>
-          <span class="muted" style="font-size:12px">ou <span class="kbd">${esc(prettyShortcut(s.shortcutToggle))}</span></span>
+          ${s.shortcutToggle ? `<span class="muted" style="font-size:12px">ou <span class="kbd">${esc(prettyShortcut(s.shortcutToggle))}</span></span>` : ''}
         </div>
       </div>`;
     $('#bigRec').onclick = () => api.rec.start();
@@ -206,7 +206,7 @@ async function renderLive() {
           <div class="muted" style="font-size:12.5px;display:flex;gap:10px;flex-wrap:wrap;margin-top:2px">
             <span>${r.starting ? 'Iniciando — conectando ao microfone e ao som do PC…' : `${r.stopping ? 'Salvando…' : r.paused ? 'Pausado' : 'Gravando'} desde ${started}`}</span>
             ${meta?.platform ? `<span>· ${esc(meta.platform)}</span>` : ''}
-            ${meta?.folder ? `<span title="O resumo vai usar o contexto desta pasta">· ${ic('folder', 12)} ${esc(meta.folder)}</span>` : ''}
+            ${meta?.folder ? `<span class="live-folder" title="O resumo vai usar o contexto desta pasta">· ${ic('folder', 12)} ${esc(meta.folder)}</span>` : ''}
             <span class="chip ${r.tracks?.mic ? 'accent' : 'err'}" style="height:20px">${ic(r.tracks?.mic ? 'mic' : 'micOff', 12)} ${r.tracks?.mic ? 'Microfone' : 'Sem microfone'}</span>
             <span class="chip ${r.tracks?.system ? 'ok' : 'err'}" style="height:20px">${ic('speaker', 12)} ${r.tracks?.system ? 'Som do PC' : 'Sem som do PC'}</span>
           </div>

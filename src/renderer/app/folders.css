@@ -128,3 +128,9 @@
 .mic-menu .mm-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; padding: 6px 10px 4px; }
 .mic-menu button.on { color: var(--accent); font-weight: 600; }
 .mic-menu button small { display: block; font-size: 11.5px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+.live-folder { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.nav > .nav-folder.add { margin: 0 0 4px 22px; width: calc(100% - 22px); }
+.topbar h1.h1-clip { min-width: 0; max-width: 420px; }
+.topbar h1.h1-clip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar h1 .ic { flex-shrink: 0; }
+.topbar .crumb .clip { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

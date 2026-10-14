@@ -152,6 +152,8 @@ class Pipeline extends EventEmitter {
     }
     if (this.current?.id === id) {
       this.cancelled = true;
+      // Encerrar o processo pode levar alguns segundos (no Windows, a árvore inteira): mostra na hora
+      if (this.current.step) this._step(id, this.current.step, { message: 'Cancelando…' }, true);
       try { this.child?.kill(); } catch {}
       return true;
     }
@@ -298,7 +300,7 @@ class Pipeline extends EventEmitter {
     this.library.writeJson(id, 'transcript.raw.json', raw);
     const n = Object.values(raw).reduce((a, s) => a + s.length, 0);
     if (!n) throw new UserError('O Whisper não reconheceu nenhuma fala no áudio.');
-    return { message: `${n} trechos transcritos com ${engineLabel}` };
+    return { message: `${n} ${n === 1 ? 'trecho transcrito' : 'trechos transcritos'} com ${engineLabel}` };
   }
 
   // 3) Une as faixas e identifica quem falou
@@ -433,7 +435,7 @@ ${text}
     const folderNote = folder.name ? this._applyFolderBlock(folder.name, parsed.data, m) : '';
     const secs = res.durationMs ? ` em ${Math.round(res.durationMs / 1000)}s` : '';
     const bits = [`Resumo gerado${secs}`];
-    if (actions.length) bits.push(`${actions.length} itens de ação`);
+    if (actions.length) bits.push(`${actions.length} ${actions.length === 1 ? 'item de ação' : 'itens de ação'}`);
     if (doubts.length) bits.push(`${doubts.length} ${doubts.length === 1 ? 'ponto de dúvida' : 'pontos de dúvida'}`);
     if (folderNote) bits.push(folderNote);
     return { message: bits.join(' · ') };

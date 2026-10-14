@@ -51,8 +51,8 @@ function renderNav() {
     + `<div class="nav-folders">
         ${state.folders.length ? `<button class="nav-folder ${af === '' && r === 'home' ? 'active' : ''}" data-folder="" title="Reuniões fora de qualquer pasta">${ic('fileText', 15)}<span class="nm">Sem pasta</span><span class="count">${loose || ''}</span></button>` : ''}
         ${folders}
-        <button class="nav-folder add" id="navNewFolder" title="Criar uma pasta para agrupar reuniões do mesmo assunto">${ic('plus', 15)}<span class="nm">Nova pasta</span></button>
-      </div>`
+      </div>
+      <button class="nav-folder add" id="navNewFolder" title="Criar uma pasta para agrupar reuniões do mesmo assunto">${ic('plus', 15)}<span class="nm">Nova pasta</span></button>`
     + btn('import', 'upload', 'Importar áudio', '', false)
     + '<div class="nav-sep"></div>'
     + btn('diagnostics', 'activity', 'Diagnóstico', '', r === 'diagnostics')
