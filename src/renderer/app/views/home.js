@@ -318,8 +318,19 @@ function startWave() {
 }
 
 // ───────── Lista ─────────
+// Reunião gravando/processando no outro computador (pasta sincronizada no Drive)
+const LEASE_MS = 10 * 60 * 1000;
+function remoteInfo(m) {
+  if (!['recording', 'paused', 'processing'].includes(m.status) || !m.busyBy?.id || m.busyBy.id === state.settings.machineId) return null;
+  return { name: m.busyBy.name || 'outro PC', stale: Date.now() - (Date.parse(m.busyAt || '') || 0) > LEASE_MS };
+}
+
 function statusInfo(m) {
   const prog = state.progress[m.id];
+  const remote = remoteInfo(m);
+  if (remote?.stale) return { av: 'err', icon: 'alert', chip: `<span class="chip warn" title="Sem sinal do ${esc(remote.name)} há mais de 10 min. Abra a reunião para liberá-la.">Parada no ${esc(remote.name)}</span>` };
+  if (remote && m.status !== 'processing') return { av: 'rec', icon: 'mic', chip: `<span class="chip rec"><span class="d"></span>Gravando no ${esc(remote.name)}</span>` };
+  if (remote) return { av: 'busy', icon: 'loader', spin: true, chip: `<span class="chip info">Processando no ${esc(remote.name)}</span>` };
   if (m.status === 'recording' || (state.rec.active && state.rec.id === m.id)) return { av: 'rec', icon: 'mic', chip: `<span class="chip rec"><span class="d"></span>Gravando</span>` };
   if (m.status === 'processing') {
     const steps = { ...(m.steps || {}), ...(prog || {}) };

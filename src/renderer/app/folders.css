@@ -79,6 +79,7 @@
 .doubt .dq { display: flex; align-items: center; gap: 8px; }
 .doubt .dq b { font-weight: 600; line-height: 1.4; }
 .doubt .play-at { height: 24px; padding: 0 7px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.doubt .play-at.on { background: var(--accent); color: #fff; }
 .doubt .dx { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
 .doubt .dx .who { font-weight: 650; color: var(--text); margin-right: 4px; }
 .doubt .dx mark { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); padding: 0 1px; }

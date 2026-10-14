@@ -194,6 +194,7 @@ class Pipeline extends EventEmitter {
         this.emit('failed', { id, step, error: msg, code: e.code });
       }
     } finally {
+      if (!this.queue.some((j) => j.id === id)) this.library.clearWork(id); // cópias locais não são mais necessárias
       this.current = null;
       this.child = null;
       this._next();
@@ -212,15 +213,24 @@ class Pipeline extends EventEmitter {
   // 1) Corrige os arquivos webm (duração/busca), mede volume e duração
   async _audio(id) {
     const meta = this.library.get(id);
-    const f = (n) => this.library.file(id, n);
+    const L = this.library;
     const msg = (m, p) => this._step(id, 'audio', { message: m, progress: p });
+    // Arquivos pesados ficam numa pasta local; com a biblioteca no Drive, baixa o que faltar (com progresso)
+    const local = (n) => L.toLocal(id, n, (p) => msg(`Baixando ${n} do ${L.isCloud() ? 'Google Drive' : 'disco'}… ${Math.round(p * 100)}%`, p * 0.2));
+    const f = (n) => L.workFile(id, n);
+    fs.mkdirSync(L.workDir(id), { recursive: true });
     const warnings = [];
     const info = {};
 
-    if (meta.source === 'import') {
+    // Importado na nuvem: o original (às vezes um vídeo enorme) não vai para o Drive, só o mix.webm.
+    // Reprocessar depois (ou no outro PC) parte do mix.webm.
+    const hasOriginal = meta.originalFile && (fs.existsSync(L.file(id, meta.originalFile)) || fs.existsSync(f(meta.originalFile)));
+    if (meta.source === 'import' && hasOriginal) {
+      const orig = await local(meta.originalFile);
       msg('Convertendo arquivo importado…', 0.2);
-      const r = await run(ffmpegPath(), ['-hide_banner', '-y', '-i', f(meta.originalFile), '-vn', '-ac', '1', '-c:a', 'libopus', '-b:a', '48k', f('mix.webm')], { timeout: 3600e3, onSpawn: (c) => this._setChild(c) });
+      const r = await run(ffmpegPath(), ['-hide_banner', '-y', '-i', orig, '-vn', '-ac', '1', '-c:a', 'libopus', '-b:a', '48k', f('mix.webm')], { timeout: 3600e3, onSpawn: (c) => this._setChild(c) });
       if (r.code !== 0) throw new UserError('Não consegui ler o arquivo importado. Ele contém áudio? ' + r.err.slice(-200));
+      L.publish(id, 'mix.webm');
       this.library.update(id, { tracks: { mix: true }, audioFile: 'mix.webm' });
     } else {
       const tracks = Object.entries(meta.tracks || {}).filter(([, v]) => v).map(([k]) => k);
@@ -228,11 +238,12 @@ class Pipeline extends EventEmitter {
       let i = 0;
       for (const t of tracks) {
         msg(`Finalizando faixa ${t === 'mic' ? 'do microfone' : t === 'system' ? 'do sistema' : 'mixada'}…`, i++ / tracks.length * 0.5);
-        const src = f(`${t}.webm`);
+        if (!fs.existsSync(L.file(id, `${t}.webm`)) && !fs.existsSync(f(`${t}.webm`))) { meta.tracks[t] = false; continue; }
+        const src = await local(`${t}.webm`);
         if (!fs.existsSync(src) || fs.statSync(src).size < 1000) { meta.tracks[t] = false; continue; }
-        const tmp = f(`${t}.fixed.webm`);
+        const tmp = src.replace(/\.webm$/, '.fixed.webm');
         const r = await run(ffmpegPath(), ['-hide_banner', '-y', '-i', src, '-c', 'copy', tmp], { timeout: 3600e3 });
-        if (r.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0) replaceFile(tmp, src);
+        if (r.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0) { replaceFile(tmp, src); L.publish(id, `${t}.webm`); }
         else { try { fs.unlinkSync(tmp); } catch {} }
       }
       this.library.update(id, { tracks: meta.tracks, audioFile: meta.tracks.mix ? 'mix.webm' : (meta.tracks.system ? 'system.webm' : 'mic.webm') });
@@ -244,7 +255,7 @@ class Pipeline extends EventEmitter {
     let i = 0;
     for (const t of tracks) {
       msg('Analisando volume e duração…', 0.5 + (i++ / tracks.length) * 0.5);
-      info[t] = await probeAudio(f(`${t}.webm`));
+      info[t] = await probeAudio(await local(`${t}.webm`));
     }
     const duration = Math.max(...Object.values(info).map((x) => x.duration || 0), m2.duration || 0);
     if (info.mic && info.mic.maxVolume < SILENT_DB) warnings.push('O microfone ficou em silêncio durante toda a gravação. Verifique o dispositivo selecionado.');
@@ -279,7 +290,7 @@ class Pipeline extends EventEmitter {
       const t0 = Date.now();
       let lastStatus = '';
       raw[t] = await transcribe({
-        file: this.library.file(id, `${t}.webm`),
+        file: await this.library.toLocal(id, `${t}.webm`),
         duration: info[t]?.duration,
         settings,
         onChild: (c) => this._setChild(c),
