@@ -1,7 +1,8 @@
 // Verificações de ambiente exibidas na tela "Diagnóstico" e ações de correção.
 const fs = require('fs');
 const os = require('os');
-const { ffmpegPath, run, findPython, clearCache } = require('./tools');
+const { ffmpegPath, run, clearCache } = require('./tools');
+const W = require('./whisper');
 const { claudeInfo, SKILL_PATH } = require('./claude');
 const { codexInfo } = require('./codex');
 const { ENGINES, engineOf } = require('./ai');
@@ -11,13 +12,20 @@ const { ENGINES, engineOf } = require('./ai');
 function aiCheck(eng, info, selected) {
   const E = ENGINES[eng];
   const base = { id: eng, ai: true, selected, group: 'Resumo', label: `${E.cli}${selected ? ' — motor do resumo' : ''}` };
+  if (eng === 'claude' && !info.ok) {
+    return { ...base, state: selected ? 'error' : 'info', detail: selected ? 'Não instalado. O MeetRec instala para você (≈ 1 min, sem precisar de terminal).' : 'Não instalado (opcional, alternativa ao Codex).', action: { id: 'install-claude', label: 'Instalar Claude Code' } };
+  }
+  if (eng === 'claude' && info.auth?.known && !info.auth.loggedIn) {
+    return { ...base, state: selected ? 'error' : 'info', detail: `${info.version} · não conectado à sua conta Claude (precisa de assinatura Pro ou Max).`, action: { id: 'login-claude', label: 'Entrar na conta' } };
+  }
   if (!info.ok) {
     return { ...base, state: selected ? 'error' : 'info', detail: selected ? `${info.message} Instale: ${E.install}` : `Não instalado (opcional, alternativa ao ${eng === 'codex' ? 'Claude' : 'Codex'}). Instale: ${E.install}`, action: { id: `open-${eng}-docs`, label: 'Como instalar' } };
   }
   if (eng === 'codex' && !info.loggedIn) {
     return { ...base, state: selected ? 'warn' : 'info', detail: `${info.version} · login não confirmado — rode "codex login" num terminal e entre com sua conta ChatGPT (se já fez, clique em Testar).`, action: { id: 'test-codex', label: 'Testar conexão' } };
   }
-  return { ...base, state: selected ? 'ok' : 'info', detail: `${info.version} · ${info.path}${selected ? '' : ' · disponível como alternativa'}`, action: { id: `test-${eng}`, label: 'Testar conexão' } };
+  const who = info.auth?.loggedIn ? ` · conectado${info.auth.email ? ` como ${info.auth.email}` : ''}${info.auth.plan ? ` (plano ${info.auth.plan[0].toUpperCase()}${info.auth.plan.slice(1)})` : ''}` : '';
+  return { ...base, state: selected ? 'ok' : 'info', detail: `${info.version}${who}${selected ? '' : ' · disponível como alternativa'}`, action: { id: `test-${eng}`, label: 'Testar conexão' } };
 }
 
 function bytes(n) {
@@ -25,7 +33,7 @@ function bytes(n) {
   return Math.round(n / 1e6) + ' MB';
 }
 
-async function runChecks({ store, bridge, detector }) {
+async function runChecks({ store, bridge, detector, models }) {
   clearCache();
   const s = store.get();
   const checks = [];
@@ -47,16 +55,17 @@ async function runChecks({ store, bridge, detector }) {
 
   // Transcrição
   if (s.engine === 'local') {
-    const py = await findPython(s.pythonPath);
-    if (!py) {
-      add({ id: 'python', group: 'Transcrição', label: 'Python 3', state: 'error', detail: 'Não encontrado. Instale o Python 3.9+ (python.org) ou use Groq/OpenAI.', action: { id: 'open-python', label: 'Baixar Python' } });
-    } else {
-      add({ id: 'python', group: 'Transcrição', label: 'Python 3', state: 'ok', detail: `${py.version} (${py.cmd})` });
-      const fw = await run(py.cmd, [...py.args, '-c', 'import faster_whisper; print(faster_whisper.__version__)'], { timeout: 30000 });
-      add(fw.code === 0
-        ? { id: 'whisper', group: 'Transcrição', label: 'Motor local (faster-whisper)', state: 'ok', detail: `Versão ${fw.out.trim()} · modelo "${s.localModel}"`, action: { id: 'download-model', label: 'Baixar modelo agora' } }
-        : { id: 'whisper', group: 'Transcrição', label: 'Motor local (faster-whisper)', state: 'error', detail: 'Não instalado. Clique para instalar (≈ 100 MB).', action: { id: 'install-whisper', label: 'Instalar motor local' } });
-    }
+    const bin = W.binaryPath();
+    add(bin
+      ? { id: 'whisper', group: 'Transcrição', label: 'Motor local (whisper.cpp)', state: 'ok', detail: 'Embutido no app — não precisa instalar nada.' }
+      : { id: 'whisper', group: 'Transcrição', label: 'Motor local (whisper.cpp)', state: 'error', detail: 'Não encontrado nesta instalação. Reinstale o MeetRec ou use Groq/OpenAI em Configurações → Transcrição.' });
+    const m = W.modelInfo(s.localModel);
+    const st = models.status(m.id);
+    add(st.ready
+      ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'ok', detail: `Baixado e pronto (${W.fmtBytes(m.size)}).` }
+      : st.downloading
+        ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Baixando… ${Math.floor((st.received / st.total) * 100)}%`, model: m.id }
+        : { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Ainda não baixado (${W.fmtBytes(st.total)}). Baixe agora ou ele será baixado na primeira transcrição.`, action: { id: 'download-model', label: 'Baixar agora' }, model: m.id });
   } else {
     const name = s.engine === 'groq' ? 'Groq' : 'OpenAI';
     const key = s.engine === 'groq' ? s.groqKey : s.openaiKey;
@@ -100,23 +109,4 @@ async function runChecks({ store, bridge, detector }) {
   return checks;
 }
 
-// Ações longas com log em tempo real
-async function installWhisper(store, log) {
-  const py = await findPython(store.get('pythonPath'));
-  if (!py) throw new Error('Python não encontrado.');
-  log(`> ${py.cmd} -m pip install --upgrade faster-whisper\n`);
-  const r = await run(py.cmd, [...py.args, '-m', 'pip', 'install', '--upgrade', 'faster-whisper'], { onStdout: log, onStderr: log, timeout: 30 * 60e3 });
-  if (r.code !== 0) throw new Error('A instalação falhou. Veja o log acima.');
-}
-
-async function downloadModel(store, log) {
-  const py = await findPython(store.get('pythonPath'));
-  if (!py) throw new Error('Python não encontrado.');
-  const model = store.get('localModel');
-  log(`Baixando o modelo "${model}"… (pode levar alguns minutos)\n`);
-  const code = `from faster_whisper.utils import download_model\nimport os\np = download_model(${JSON.stringify(model)})\nprint('Modelo salvo em', p)`;
-  const r = await run(py.cmd, [...py.args, '-c', code], { onStdout: log, onStderr: log, timeout: 60 * 60e3, env: { PYTHONIOENCODING: 'utf-8' } });
-  if (r.code !== 0) throw new Error('Falha ao baixar o modelo.');
-}
-
-module.exports = { runChecks, installWhisper, downloadModel };
+module.exports = { runChecks };

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checagem rápida usada no CI: sintaxe de todo o JavaScript (CommonJS e módulos ES),
-// do script Python e dos JSON do projeto.
+// e dos JSON do projeto.
 'use strict';
 
 const { spawnSync } = require('child_process');
@@ -41,11 +41,5 @@ for (const f of ['package.json', 'extension/manifest.json']) {
   try { JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')); } catch (e) { failed++; console.error(`✗ ${f}: ${e.message}`); }
 }
 
-const py = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'py_compile', path.join(root, 'python', 'transcribe.py')], { encoding: 'utf8', shell: process.platform === 'win32' });
-if (py.error || py.status !== 0) {
-  if (py.error || /not found|não é reconhecido/i.test(py.stderr)) console.warn('! Python não encontrado — pulando python/transcribe.py');
-  else { failed++; console.error(`✗ python/transcribe.py\n${py.stderr}`); }
-}
-
 if (failed) { console.error(`\n${failed} arquivo(s) com erro.`); process.exit(1); }
-console.log(`✓ ${files.length} arquivos JavaScript, JSON e Python sem erros de sintaxe.`);
+console.log(`✓ ${files.length} arquivos JavaScript e JSON sem erros de sintaxe.`);

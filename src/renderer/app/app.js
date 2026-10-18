@@ -7,6 +7,7 @@ import * as Settings from './views/settings.js';
 import * as Diagnostics from './views/diagnostics.js';
 import * as Folder from './views/folder.js';
 import { createFolderDialog, moveMeeting } from './folders-ui.js';
+import { openWizard } from './setup-ui.js';
 
 const VIEWS = { home: Home, meeting: Meeting, settings: Settings, diagnostics: Diagnostics, folder: Folder };
 let current = null;
@@ -137,8 +138,11 @@ function renderSideStatus() {
 
   const ai = aiHealth();
   rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${ai ? ai.state : ''}"></span>${aiName() === 'Codex' ? 'Codex CLI' : 'Claude Code'}<span class="val">${ai ? (ai.state === 'ok' ? 'conectado' : 'verificar') : '…'}</span></button>`);
-  const eng = find('whisper') || find('cloudkey') || find('python');
-  const engName = s.engine === 'local' ? 'Whisper local' : s.engine === 'groq' ? 'Groq' : 'OpenAI';
+  // Motor local: o pior entre o motor e o modelo (modelo ainda não baixado = amarelo)
+  const eng = s.engine === 'local'
+    ? [find('whisper'), find('model')].filter(Boolean).sort((a, b) => ['error', 'warn', 'info', 'ok'].indexOf(a.state) - ['error', 'warn', 'info', 'ok'].indexOf(b.state))[0]
+    : find('cloudkey');
+  const engName = s.engine === 'local' ? (find('model')?.state === 'ok' || !find('model') ? 'Whisper local' : 'baixar modelo') : s.engine === 'groq' ? 'Groq' : 'OpenAI';
   rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${eng ? eng.state : ''}"></span>Transcrição<span class="val">${esc(engName)}</span></button>`);
   const b = state.bridge;
   rows.push(`<button class="stat" data-go="settings" data-tab="integrations"><span class="led ${b.error ? 'error' : b.connected ? 'ok' : ''}"></span>Extensão<span class="val">${b.connected ? (b.inCall ? `em chamada · ${esc(b.platform || '')}` : 'conectada') : 'desconectada'}</span></button>`);
@@ -290,26 +294,6 @@ document.addEventListener('drop', async (e) => {
   for (const p of media) await api.lib.importFile(p);
 });
 
-// ───────── Boas-vindas (primeira execução) ─────────
-function onboarding() {
-  const health = state.health || [];
-  const row = (c) => `<div class="onb-step"><span class="n" style="background:${c.state === 'ok' ? 'var(--ok)' : c.state === 'error' ? 'var(--rec)' : 'var(--warn)'}">${ic(c.state === 'ok' ? 'check' : c.state === 'error' ? 'x' : 'alert', 14)}</span><div class="grow"><b>${esc(c.label)}</b><div class="muted" style="font-size:12px">${esc(c.detail)}</div></div></div>`;
-  const important = health.filter((c) => (c.ai && c.selected) || ['whisper', 'python', 'cloudkey', 'sysaudio'].includes(c.id));
-  modal({
-    title: 'Bem-vindo ao MeetRec 👋',
-    wide: true,
-    body: `<p class="muted" style="line-height:1.55;margin:4px 0 14px">Grave reuniões do Teams, Meet, Zoom ou qualquer app: o MeetRec capta <b>sua voz</b> e o <b>som do computador</b>, transcreve e o <b>Claude Code</b> escreve o resumo no estilo Notion.</p>
-      <label style="font-weight:600;font-size:13px">Como você quer ser chamado nas transcrições?</label>
-      <input class="input" id="onbName" placeholder="Seu nome (ex.: Luis)" style="margin-top:8px" value="${esc(state.settings.userName || '')}">
-      <div class="onb-steps">${important.map(row).join('')}</div>
-      <p class="muted" style="font-size:12.5px;margin-top:14px">Dica: depois, veja <b>Diagnóstico</b> para instalar o que faltar com um clique, e <b>Configurações → Integrações</b> para identificar quem fala no Teams pelo navegador.</p>`,
-    actions: [
-      { label: `${ic('activity', 15)} Abrir diagnóstico`, onClick: async (m) => { await api.setSettings({ userName: m.querySelector('#onbName').value.trim(), onboarded: true }); navigate('diagnostics'); } },
-      { label: 'Começar', kind: 'primary', onClick: async (m) => { await api.setSettings({ userName: m.querySelector('#onbName').value.trim(), onboarded: true }); toast('success', 'Tudo pronto! Clique em "Gravar reunião" quando quiser.'); } },
-    ],
-  });
-}
-
 // ───────── Inicialização ─────────
 (async () => {
   const [settings, info, list, rec, bridge, apps, pipe, update, folders] = await Promise.all([
@@ -325,5 +309,7 @@ function onboarding() {
   renderSideStatus();
   navigate(rec.active ? { view: 'home' } : { view: 'home' });
   await ctx.runHealth();
-  if (!state.settings.onboarded) onboarding();
+  // Primeira execução: assistente (Whisper + Claude sem terminal). Quem atualizou da versão com Python vê só o aviso do modelo.
+  if (!state.settings.onboarded) openWizard();
+  else if (state.settings.whisperNotice) openWizard({ mode: 'whisper' });
 })();

@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { findClaude, needsShell, run } = require('./tools');
+const { authStatus } = require('./claude-setup');
 const { UserError } = require('./transcribe');
 
 const SKILL_PATH = path.join(os.homedir(), '.claude', 'skills', 'resumo-reuniao', 'SKILL.md');
@@ -20,13 +21,14 @@ async function claudeInfo(settings) {
   if (!bin) return { ok: false, message: 'Claude Code CLI não encontrado.' };
   const r = await run(bin, ['--version'], { timeout: 15000, shell: needsShell(bin) });
   if (r.code !== 0) return { ok: false, path: bin, message: `Falha ao executar: ${(r.err || r.out).slice(0, 200)}` };
-  return { ok: true, path: bin, version: r.out.trim().split('\n')[0], skill: fs.existsSync(SKILL_PATH) ? SKILL_PATH : null };
+  const auth = await authStatus(bin);
+  return { ok: true, path: bin, version: r.out.trim().split('\n')[0], skill: fs.existsSync(SKILL_PATH) ? SKILL_PATH : null, auth };
 }
 
 function friendlyError(text) {
   const t = (text || '').toLowerCase();
   if (t.includes('/login') || t.includes('not logged in') || t.includes('invalid api key') || t.includes('authentication'))
-    return 'O Claude Code não está autenticado. Abra um terminal, rode "claude" e faça login.';
+    return 'O Claude Code não está conectado à sua conta. Vá em Diagnóstico → "Entrar na conta".';
   if (t.includes('rate limit') || t.includes('usage limit') || t.includes('limit reached'))
     return 'Limite de uso do Claude atingido. Tente novamente mais tarde.';
   if (t.includes('enotfound') || t.includes('network') || t.includes('econnrefused'))
@@ -40,7 +42,7 @@ function friendlyError(text) {
  */
 async function runClaude({ prompt, settings, cwd, onText, onStatus, onChild, timeoutMs = 15 * 60 * 1000 }) {
   const bin = await findClaude(settings.claudePath);
-  if (!bin) throw new UserError('Claude Code CLI não encontrado. Instale com "npm i -g @anthropic-ai/claude-code" ou informe o caminho em Configurações.', 'no-claude');
+  if (!bin) throw new UserError('O Claude Code não está instalado. Vá em Diagnóstico → "Instalar Claude Code" (um clique).', 'no-claude');
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', '--no-session-persistence'];
   if (settings.claudeModel) args.push('--model', settings.claudeModel);

@@ -1,5 +1,5 @@
 # Checagem a cada push/pull request: instala as dependências e valida a sintaxe
-# de todo o JavaScript (inclusive os módulos ES do app), do JSON e do Python.
+# de todo o JavaScript (inclusive os módulos ES do app) e do JSON, e roda os testes.
 # Os instaladores são gerados só pelo workflow Release.
 
 name: CI

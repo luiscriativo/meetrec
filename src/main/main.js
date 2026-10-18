@@ -13,7 +13,10 @@ const { Pipeline } = require('./pipeline');
 const { Bridge } = require('./bridge');
 const { MeetingDetector } = require('./detector');
 const { Updater } = require('./updater');
-const { runChecks, installWhisper, downloadModel } = require('./diagnostics');
+const { runChecks } = require('./diagnostics');
+const { ModelManager, modelId, MODELS, VAD, DEFAULT_MODEL } = require('./whisper');
+const { configureLocal } = require('./transcribe');
+const { ClaudeSetup } = require('./claude-setup');
 const { runAI, engineOf, ENGINES } = require('./ai');
 const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
@@ -44,12 +47,22 @@ if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'io.git
 // Desenvolvimento: perfil separado (ex.: dados de demonstração para os prints do README)
 const devProfile = !app.isPackaged && process.argv.find((a) => a.startsWith('--user-data='));
 if (devProfile) app.setPath('userData', path.resolve(devProfile.slice('--user-data='.length)));
+// Desenvolvimento: simula situações do Claude Code sem mexer na instalação real
+//   --claude-config=<pasta>  conta não conectada (configuração vazia)
+//   --hide-claude            "não instalado"
+//   --fake-claude-install    instalador de mentira (progresso + log, não instala nada)
+if (!app.isPackaged) {
+  const cfg = process.argv.find((a) => a.startsWith('--claude-config='));
+  if (cfg) process.env.CLAUDE_CONFIG_DIR = path.resolve(cfg.slice('--claude-config='.length));
+  if (process.argv.includes('--hide-claude')) process.env.MEETREC_DEV_HIDE_CLAUDE = '1';
+  if (process.argv.includes('--fake-claude-install')) process.env.MEETREC_DEV_FAKE_INSTALL = '1';
+}
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'meetrec-media', privileges: { stream: true, supportFetchAPI: true, bypassCSP: true, standard: true } }]);
 
-let store, library, pipeline, bridge, detector, updater, tray;
+let store, library, pipeline, bridge, detector, updater, tray, models, claudeSetup;
 let mainWin = null, overlayWin = null, recorderWin = null;
 let quitting = false;
 let hiddenHintShown = false;
@@ -897,14 +910,20 @@ function setupIpc() {
   });
 
   // Diagnóstico
-  ipcMain.handle('diag:run', () => runChecks({ store, bridge, detector }));
+  ipcMain.handle('diag:run', () => runChecks({ store, bridge, detector, models }));
   ipcMain.handle('diag:action', async (e, action) => {
     const log = (t) => e.sender.send('evt', { type: 'diag-log', payload: String(t) });
     try {
-      if (action === 'install-whisper') { await installWhisper(store, log); return { ok: true, message: 'Motor local instalado!' }; }
-      if (action === 'download-model') { await downloadModel(store, log); return { ok: true, message: 'Modelo baixado e pronto.' }; }
+      if (action === 'download-model') { await models.ensure(store.get('localModel')); return { ok: true, message: 'Modelo baixado e pronto.' }; }
+      if (action === 'install-claude') {
+        const st = await claudeSetup.install(store.get('claudePath'));
+        return { ok: true, message: `Claude Code ${st.version} instalado! Agora clique em "Entrar na conta".` };
+      }
+      if (action === 'login-claude') {
+        const st = await claudeSetup.login(store.get('claudePath'));
+        return { ok: true, message: st.email ? `Conectado como ${st.email} ✅` : 'Conta conectada ✅' };
+      }
       if (action === 'open-storage') { shell.openPath(store.get('storageDir')); return { ok: true }; }
-      if (action === 'open-python') { shell.openExternal('https://www.python.org/downloads/'); return { ok: true }; }
       const docs = action.match(/^open-(claude|codex)-docs$/);
       if (docs) { shell.openExternal(ENGINES[docs[1]].docs); return { ok: true }; }
       if (action === 'open-extension') { showMain({ view: 'settings', tab: 'integrations' }); return { ok: true }; }
@@ -936,6 +955,26 @@ function setupIpc() {
 
   ipcMain.handle('bridge:status', () => bridge.status());
 
+  // Primeiro uso: modelo do Whisper e Claude Code (instalação e login) sem terminal
+  const modelOf = (id) => modelId(id || store.get('localModel'));
+  ipcMain.handle('setup:catalog', () => ({ models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label, desc: m.desc, size: m.size + VAD.size, recommended: !!m.recommended })), defaultModel: DEFAULT_MODEL }));
+  ipcMain.handle('setup:modelStatus',(_e, id) => ({ ...models.status(modelOf(id)), downloaded: models.downloaded() }));
+  ipcMain.handle('setup:modelDownload', async (_e, id) => {
+    try { await models.ensure(modelOf(id)); return { ok: true }; } catch (err) { return { ok: false, error: err.message, code: err.code }; }
+  });
+  ipcMain.handle('setup:modelCancel', (_e, id) => models.cancel(modelOf(id)));
+  ipcMain.handle('setup:modelCleanup', () => ({ freed: models.removeOthers(store.get('localModel')) }));
+  ipcMain.handle('setup:claudeStatus', () => claudeSetup.status(store.get('claudePath')));
+  ipcMain.handle('setup:claudeState', () => ({ ...claudeSetup.state }));
+  ipcMain.handle('setup:claudeInstall', async () => {
+    try { return { ok: true, status: await claudeSetup.install(store.get('claudePath')) }; } catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle('setup:claudeLogin', async () => {
+    try { return { ok: true, auth: await claudeSetup.login(store.get('claudePath')) }; } catch (err) { return { ok: false, error: err.message, cancelled: !!err.cancelled }; }
+  });
+  ipcMain.handle('setup:claudeCode', (_e, code) => claudeSetup.sendCode(code));
+  ipcMain.handle('setup:claudeCancel', () => claudeSetup.cancel());
+
   // Atualização
   ipcMain.handle('update:status', () => updater.status);
   ipcMain.handle('update:check', () => updater.check(true));
@@ -957,13 +996,35 @@ function setupIpc() {
   ipcMain.handle('detector:apps', () => detector.apps);
 }
 
+// ───────────────────────── Motor local (whisper.cpp) e Claude Code ─────────────────────────
+function setupLocalEngine() {
+  const ud = app.getPath('userData');
+  const workDir = path.join(ud, 'whisper-work');
+  // Sobras de uma transcrição interrompida (o app fechou no meio)
+  try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+  models = new ModelManager(path.join(ud, 'models'));
+  configureLocal({ models, workDir });
+  claudeSetup = new ClaudeSetup();
+  models.on('progress', (st) => send('model-progress', st));
+  claudeSetup.on('state', (st) => send('claude-setup', st));
+
+  // Quem vinha da versão com Python: o modelo precisa ser baixado de novo (formato do whisper.cpp).
+  // Quem estava no padrão antigo (Small) passa para o Turbo, o novo padrão; o app avisa uma vez.
+  if (!store.get('whisperCpp')) {
+    const old = store.get('localModel');
+    const localModel = old === 'small' ? 'large-v3-turbo' : old === 'tiny' ? 'base' : modelId(old);
+    store.set({ whisperCpp: true, localModel, whisperNotice: !!store.get('onboarded') && store.get('engine') === 'local' });
+  }
+}
+
 // ───────────────────────── Protocolo de mídia (com suporte a Range p/ busca no player) ─────────────────────────
 function setupMediaProtocol() {
   protocol.handle('meetrec-media', (req) => {
     const u = new URL(req.url);
     const [, id, file] = u.pathname.split('/').map(decodeURIComponent);
-    const fp = library.file(id, path.basename(file));
-    if (!fp.startsWith(library.root) || !fs.existsSync(fp)) return new Response('not found', { status: 404 });
+    const fp = path.resolve(library.file(id, path.basename(file)));
+    // Compara caminhos normalizados (a pasta pode estar salva com "/" ou "\")
+    if (!fp.startsWith(path.resolve(library.root) + path.sep) || !fs.existsSync(fp)) return new Response('not found', { status: 404 });
     const size = fs.statSync(fp).size;
     const type = fp.endsWith('.webm') ? 'audio/webm' : fp.endsWith('.mp3') ? 'audio/mpeg' : 'application/octet-stream';
     const range = req.headers.get('range');
@@ -1010,10 +1071,12 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   // Deixa claro para o outro PC que nada mais está rodando aqui (senão ele espera o sinal de vida expirar)
   try { library?.recoverInterrupted(); library?.close(); } catch {}
+  try { claudeSetup?.cancel(); } catch {}
 });
 
 app.whenReady().then(async () => {
   store = new Store();
+  setupLocalEngine();
   extInfo = syncExtensionCopy();
   library = new Library(store, { workRoot: path.join(app.getPath('userData'), 'trabalho') });
   pipeline = new Pipeline(library, store);

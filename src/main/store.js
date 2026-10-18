@@ -29,10 +29,9 @@ function defaults() {
 
     autoProcess: true,
     engine: 'local', // local | groq | openai
-    localModel: 'small',
+    localModel: 'large-v3-turbo', // whisper.cpp (src/main/whisper.js)
     groqKey: '',
     openaiKey: '',
-    pythonPath: '',
     vocabulary: '',
 
     aiEngine: 'claude', // motor do resumo: claude | codex
@@ -57,6 +56,7 @@ function defaults() {
     shortcutMarker: 'CommandOrControl+Shift+M',
     theme: 'system',
     onboarded: false,
+    whisperCpp: true, // false = instalação anterior à troca do Python pelo whisper.cpp (migração em main.js)
   };
 }
 
@@ -68,6 +68,8 @@ class Store extends EventEmitter {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       for (const k of SECRET_KEYS) raw[k] = this._decrypt(raw[k]);
+      if (raw.whisperCpp === undefined) raw.whisperCpp = false; // veio de uma versão com Python
+      delete raw.pythonPath;
       this.data = { ...this.data, ...raw };
     } catch { /* primeira execução */ }
     this.save();

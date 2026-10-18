@@ -14,7 +14,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-black?style=flat-square)](LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-44-black?style=flat-square&logo=electron)](https://www.electronjs.org/)
 [![Claude Code](https://img.shields.io/badge/resumos-Claude%20Code-black?style=flat-square&logo=anthropic)](https://docs.claude.com/en/docs/claude-code/overview)
-[![Whisper](https://img.shields.io/badge/transcrição-Whisper-black?style=flat-square)](https://github.com/SYSTRAN/faster-whisper)
+[![Whisper](https://img.shields.io/badge/transcrição-whisper.cpp-black?style=flat-square)](https://github.com/ggml-org/whisper.cpp)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-black?style=flat-square)](#-instalação)
 
 <br />
@@ -167,13 +167,20 @@ Baixe o instalador do seu sistema na **[última versão](https://github.com/luis
 
 ### Requisitos
 
+**Nada para instalar à mão.** Na primeira vez, um assistente faz tudo dentro do app, sem terminal:
+
+1. **Transcrição**: baixa o modelo de transcrição (o padrão é o *Large v3 Turbo*, 575 MB, uma única vez, com barra de progresso, pausar e continuar). O motor ([whisper.cpp](https://github.com/ggml-org/whisper.cpp)) já vem dentro do app — não precisa de Python.
+2. **Resumos**: instala o [Claude Code](https://code.claude.com/docs/en/setup) pelo instalador oficial e abre o navegador para você entrar na sua conta Claude. O app percebe sozinho quando o login termina.
+
+![Assistente de primeiro uso](docs/screenshots/setup-wizard.png)
+
 | Para | Você precisa de |
 |---|---|
-| Resumos e perguntas | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) instalado e logado (`npm i -g @anthropic-ai/claude-code`, depois rode `claude` uma vez) **ou** [Codex CLI](https://developers.openai.com/codex/cli) instalado e logado (`npm i -g @openai/codex`, depois `codex login` com sua conta ChatGPT) |
-| Transcrição local | Python 3.9+. O pacote `faster-whisper` é instalado pela tela **Diagnóstico** |
-| Transcrição na nuvem | Uma chave do [Groq](https://console.groq.com/keys) (rápido, plano gratuito) ou da [OpenAI](https://platform.openai.com/api-keys) |
+| Resumos e perguntas | Uma conta Claude **Pro** ou **Max** (o app instala e conecta o Claude Code) **ou** o [Codex CLI](https://developers.openai.com/codex/cli) com uma conta ChatGPT (`npm i -g @openai/codex`, depois `codex login`) |
+| Transcrição local | Nada: motor embutido + modelo baixado pelo app |
+| Transcrição na nuvem (opcional) | Uma chave do [Groq](https://console.groq.com/keys) (rápido, plano gratuito) ou da [OpenAI](https://platform.openai.com/api-keys) |
 
-O FFmpeg já vem embutido no app.
+O FFmpeg e o motor de transcrição já vêm embutidos no app.
 
 ### Primeira execução por sistema
 
@@ -181,7 +188,9 @@ O FFmpeg já vem embutido no app.
 - **macOS 13+**: o app não é notarizado. Na primeira vez, clique com o botão direito → **Abrir**. Depois, permita **Microfone** e **Gravação de Tela e Áudio do Sistema** em *Ajustes do Sistema → Privacidade e Segurança*. É assim que o macOS libera o áudio do sistema.
 - **Linux**: em *Configurações → Áudio e gravação*, escolha o dispositivo **"Monitor of …"** da sua saída de som como fonte do áudio do sistema (PulseAudio/PipeWire).
 
-Ao abrir, o MeetRec mostra uma tela de boas-vindas com a verificação de tudo. A tela **Diagnóstico** aponta e corrige o que faltar.
+Ao abrir, o MeetRec mostra o assistente de boas-vindas. Depois, a tela **Diagnóstico** aponta e corrige o que faltar com um clique (baixar o modelo, instalar o Claude Code, entrar na conta).
+
+**Já usava uma versão com Python?** Ao atualizar, o app avisa uma vez e baixa o modelo novo. Quem estava no modelo padrão antigo (Small) passa para o Large v3 Turbo. O Python e o `faster-whisper` podem ser desinstalados se você não usa para outra coisa.
 
 ![Diagnóstico](docs/screenshots/diagnostics.png)
 
@@ -248,14 +257,17 @@ Sem a extensão (Teams desktop, Zoom etc.), o MeetRec separa **você** dos **par
 
 | Motor | Qualidade (PT-BR) | Velocidade | Privacidade | Custo |
 |---|---|---|---|---|
-| **Local** `small` | Razoável | Rápido | 🔒 100% local | Grátis |
-| **Local** `medium` | Boa | Médio | 🔒 100% local | Grátis |
-| **Local** `large-v3-turbo` | Muito boa | Lento em CPU | 🔒 100% local | Grátis |
+| **Local** Básico (60 MB) | Razoável | ⚡ Muito rápido | 🔒 100% local | Grátis |
+| **Local** Small (490 MB) | Boa | Rápido | 🔒 100% local | Grátis |
+| **Local** Large v3 Turbo (575 MB) — **padrão** | Muito boa | ~0,5× a duração do áudio numa CPU recente* | 🔒 100% local | Grátis |
+| **Local** Large v3 (1,1 GB) | Máxima | Lento em CPU | 🔒 100% local | Grátis |
 | **Groq** (`whisper-large-v3-turbo`) | Muito boa | ⚡ segundos | Nuvem | Plano gratuito generoso |
 | **OpenAI** (`whisper-1`) | Muito boa | Rápido | Nuvem | Pago por minuto |
 
+\* Medido num Ryzen 5 6600H: 2 min de reunião transcritos em ~65 s. No Mac, o motor usa a GPU (Metal) e fica bem mais rápido. Os trechos de silêncio são pulados (detector de fala), o que acelera reuniões com pausas.
+
 **Dicas:**
-- Sem GPU NVIDIA, o Whisper roda na CPU. Para usar o `large-v3-turbo` local sem pesar nas reuniões, desligue *Transcrever automaticamente* e use **Processar pendentes** quando o PC estiver livre.
+- Em PCs mais simples, escolha o modelo **Small** ou **Básico** em *Configurações → Transcrição*, ou desligue *Transcrever automaticamente* e use **Processar pendentes** quando o PC estiver livre.
 - Preencha o **Vocabulário** com nomes de pessoas, siglas e sistemas da sua empresa. Isso melhora muito o reconhecimento.
 - **Use fones de ouvido**: as faixas ficam mais limpas e a separação de falantes, perfeita.
 
@@ -318,15 +330,18 @@ Os atalhos podem ser alterados em **Configurações → Atalhos**.
 git clone https://github.com/luiscriativo/meetrec.git
 cd meetrec
 npm install
+npm run whisper   # prepara o motor de transcrição (whisper.cpp) para este sistema
 npm start
 ```
 
 | Comando | O que faz |
 |---|---|
 | `npm start` | Abre o app em modo de desenvolvimento |
-| `npm run check` | Valida a sintaxe de todo o JS (CommonJS e módulos ES), JSON e Python |
-| `npm test` | Testes da lógica de pastas, glossário, correções e do bloco de dúvidas (`node --test`) |
-| `npm run dist:win` / `dist:mac` / `dist:linux` | Gera o instalador localmente em `dist/` |
+| `npm run whisper` | Baixa (Windows, conferido por SHA-256) ou compila (macOS/Linux, precisa de `git`, `cmake` e compilador C++) o whisper.cpp em `vendor/whisper/` |
+| `npm run check` | Valida a sintaxe de todo o JS (CommonJS e módulos ES) e JSON |
+| `npm test` | Testes da lógica de pastas, glossário, correções, bloco de dúvidas, download dos modelos e instalação do Claude (`node --test`) |
+| `node scripts/smoke-whisper.js` | Teste de fumaça do motor local: baixa o modelo Básico e transcreve de verdade (roda no CI de cada sistema) |
+| `npm run dist:win` / `dist:mac` / `dist:linux` | Gera o instalador localmente em `dist/` (já roda o `npm run whisper`) |
 | `npm run icons` | Regera os ícones do app, da bandeja e da extensão |
 
 **Dados de demonstração** (usados nos prints deste README):
@@ -343,7 +358,9 @@ src/
 ├─ main/                 processo principal (Node)
 │  ├─ main.js            janelas, bandeja, atalhos, gravação, IPC
 │  ├─ pipeline.js        fila: áudio → transcrição → falantes → resumo
-│  ├─ transcribe.js      Whisper local (faster-whisper) e nuvem (Groq/OpenAI)
+│  ├─ transcribe.js      Whisper local (whisper.cpp) e nuvem (Groq/OpenAI)
+│  ├─ whisper.js         motor local: binário, argumentos e download dos modelos (retomada + SHA-256)
+│  ├─ claude-setup.js    instala o Claude Code e faz o login sem terminal
 │  ├─ speakers.js        junta as faixas, remove eco, dá nome às falas
 │  ├─ ai.js              escolhe o motor do resumo (Claude Code ou Codex CLI)
 │  ├─ claude.js          integração com o Claude Code CLI (stream-json)
@@ -351,7 +368,7 @@ src/
 │  ├─ extension.js       cópia da extensão em Documentos e atalho para a página de extensões
 │  ├─ bridge.js          servidor local (127.0.0.1) da extensão
 │  ├─ detector.js        detecta apps de reunião usando o microfone
-│  ├─ diagnostics.js     verificações e instalação do motor local
+│  ├─ diagnostics.js     verificações do ambiente e correções com um clique
 │  ├─ updater.js         atualização automática pelas releases do GitHub
 │  ├─ library.js         biblioteca de reuniões (pastas + meta.json)
 │  ├─ folders.js         pastas: glossário, correções, vocabulário e bloco de dúvidas
@@ -361,7 +378,7 @@ src/
    ├─ app/               interface principal (módulos ES, sem bundler)
    ├─ overlay/           indicador flutuante de gravação
    └─ recorder/          janela oculta que captura e mixa o áudio
-python/transcribe.py     transcrição local com progresso em JSON
+scripts/fetch-whisper.js prepara o whisper.cpp do sistema em vendor/whisper/ (fora do git)
 extension/               extensão Manifest V3 (Teams/Meet)
 ```
 
@@ -395,8 +412,9 @@ Os arquivos seguem o padrão `MeetRec-<versão>-<sistema>-<arquitetura>`, por ex
 | Problema | Solução |
 |---|---|
 | "Nenhum som do computador foi captado" | macOS: libere *Gravação de Tela e Áudio do Sistema*. Linux: escolha o dispositivo "Monitor of …". Windows: confira se o som da reunião sai neste PC. |
-| "O Claude Code não está autenticado" | Abra um terminal, rode `claude` e faça login. |
-| "Claude Code CLI não encontrado" | Instale com `npm i -g @anthropic-ai/claude-code` ou informe o caminho em *Configurações → Resumo (IA)*. |
+| "O Claude Code não está conectado à sua conta" | **Diagnóstico → Entrar na conta**. O navegador abre; entre e clique em *Autorizar*. Se a página não abrir, use **Abrir página de login**. |
+| "O Claude Code não está instalado" | **Diagnóstico → Instalar Claude Code** (instalador oficial, ~1 min). Em PCs de empresa com scripts bloqueados, peça ao TI para instalar o Claude Code. |
+| O download do modelo parou | Clique em **Continuar** (Configurações → Transcrição ou Diagnóstico): ele retoma de onde parou. |
 | "Codex CLI não encontrado" / "não está autenticado" | Instale com `npm i -g @openai/codex`, rode `codex login` num terminal e entre com sua conta ChatGPT. Depois clique em **Testar** em *Configurações → Resumo (IA)*. |
 | "Limite de uso atingido" | Espere o limite da sua assinatura renovar ou troque de motor em *Configurações → Resumo (IA)*. |
 | Transcrição local lenta | Use um modelo menor, o Groq, ou o modo "só gravar" + **Processar pendentes**. |

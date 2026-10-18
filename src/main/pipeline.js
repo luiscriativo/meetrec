@@ -4,6 +4,7 @@ const os = require('os');
 const { EventEmitter } = require('events');
 const { ffmpegPath, run, probeAudio } = require('./tools');
 const { transcribe, UserError } = require('./transcribe');
+const { modelInfo } = require('./whisper');
 const { buildTranscript, transcriptToText, fmtTime } = require('./speakers');
 const { readSkill } = require('./claude');
 const { runAI, engineName } = require('./ai');
@@ -283,20 +284,23 @@ class Pipeline extends EventEmitter {
     const total = weights.reduce((a, b) => a + b, 0);
     const raw = {};
     let done = 0;
-    const engineLabel = settings.engine === 'local' ? `Whisper local (${settings.localModel})` : settings.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
+    const engineLabel = settings.engine === 'local' ? `Whisper local (${modelInfo(settings.localModel).label})` : settings.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
     for (let i = 0; i < jobs.length; i++) {
       const t = jobs[i];
       const label = t === 'mic' ? 'sua voz' : t === 'system' ? 'participantes' : 'áudio';
-      const t0 = Date.now();
+      let t0 = Date.now();
       let lastStatus = '';
       raw[t] = await transcribe({
         file: await this.library.toLocal(id, `${t}.webm`),
         duration: info[t]?.duration,
         settings,
         onChild: (c) => this._setChild(c),
+        isCancelled: () => this.cancelled,
         onStatus: (m, code) => {
           if (code !== 'segment') lastStatus = m;
-          this._step(id, 'transcribe', { message: `${engineLabel} · ${label}: ${code === 'segment' ? m : lastStatus}` });
+          if (code === 'loading') t0 = Date.now(); // o tempo do download do modelo não entra na estimativa
+          // O download do modelo vem sem prefixo: no cartão da etapa só cabe uma linha curta
+          this._step(id, 'transcribe', { message: code === 'downloading' ? m : `${engineLabel} · ${label}: ${code === 'segment' ? m : lastStatus}` });
         },
         onProgress: (p) => {
           const overall = (done + p * weights[i]) / total;
