@@ -1,4 +1,4 @@
-// Localiza e executa ferramentas externas: ffmpeg e os CLIs de IA (Claude Code, Codex).
+// Localiza e executa ferramentas externas: ffmpeg, Python e os CLIs de IA (Claude Code, Codex).
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -63,7 +63,8 @@ let cache = {};
 // um script sem extensão (para o Git Bash) que o `where` lista e que não dá para executar daqui.
 async function findCli(name, custom, extra = []) {
   if (custom && fs.existsSync(custom)) return custom;
-  if (name === 'claude' && process.env.MEETREC_DEV_HIDE_CLAUDE) return null; // só em desenvolvimento (main.js)
+  // Só em desenvolvimento (main.js): simula o CLI não instalado
+  if ((name === 'claude' && process.env.MEETREC_DEV_HIDE_CLAUDE) || (name === 'codex' && process.env.MEETREC_DEV_HIDE_CODEX)) return null;
   if (cache[name]) return cache[name];
   const home = os.homedir();
   const candidates = [
@@ -83,7 +84,30 @@ async function findCli(name, custom, extra = []) {
 }
 
 const findClaude = (custom) => findCli('claude', custom, [path.join(os.homedir(), '.claude', 'local', isWin ? 'claude.exe' : 'claude')]);
-const findCodex = (custom) => findCli('codex', custom);
+// Instalador oficial do Codex: %LOCALAPPDATA%\Programs\OpenAI\Codex\bin no Windows, ~/.local/bin no Mac/Linux
+const findCodex = (custom) => findCli('codex', custom, isWin ? [path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'OpenAI', 'Codex', 'bin', 'codex.exe')] : []);
+
+async function findPython(custom) {
+  if (custom) {
+    const r = await run(custom, ['--version'], { timeout: 8000 });
+    if (r.code === 0) return { cmd: custom, args: [], version: (r.out || r.err).trim() };
+  }
+  if (process.env.MEETREC_DEV_HIDE_PYTHON) return null; // só em desenvolvimento (main.js)
+  if (cache.python) return cache.python;
+  const tries = isWin ? [['python', []], ['py', ['-3']], ['python3', []]] : [['python3', []], ['python', []]];
+  for (const extra of await loginShellWhich('python3')) tries.push([extra, []]);
+  for (const [cmd, args] of tries) {
+    // Pede o executável real (resolve shims .bat do pyenv-win e aliases)
+    const code = 'import sys;print(sys.executable);print(sys.version.split()[0])';
+    const r = await run(cmd, [...args, '-c', isWin ? `"${code}"` : code], { timeout: 10000, shell: isWin });
+    const lines = (r.out || '').trim().split(/\r?\n/);
+    if (r.code === 0 && lines.length >= 2 && /^3\.\d+/.test(lines[1]) && fs.existsSync(lines[0])) {
+      cache.python = { cmd: lines[0], args: [], version: `Python ${lines[1]}` };
+      return cache.python;
+    }
+  }
+  return null;
+}
 
 function clearCache() { cache = {}; }
 
@@ -104,4 +128,4 @@ async function probeAudio(file) {
   return { duration, maxVolume: mv ? +mv[1] : -91, meanVolume: meanv ? +meanv[1] : -91, ok: r.code === 0, err: r.code === 0 ? '' : txt.slice(-600) };
 }
 
-module.exports = { ffmpegPath, resourcePath, run, findClaude, findCodex, needsShell, clearCache, probeAudio, isWin, execFile };
+module.exports = { ffmpegPath, resourcePath, run, findClaude, findCodex, findPython, needsShell, clearCache, probeAudio, isWin, execFile };

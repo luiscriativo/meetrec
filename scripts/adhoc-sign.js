@@ -15,7 +15,6 @@
 'use strict';
 
 const { execFileSync, spawnSync } = require('child_process');
-const fs = require('fs');
 const path = require('path');
 
 exports.default = async function adhocSign(context) {
@@ -26,15 +25,6 @@ exports.default = async function adhocSign(context) {
   const r = spawnSync('codesign', ['-dv', appPath], { encoding: 'utf8' });
   const info = `${r.stdout || ''}${r.stderr || ''}`;
   if (/TeamIdentifier=(?!not set)/.test(info)) return;
-
-  // O motor de transcrição (whisper.cpp) fica em Resources/, onde o --deep não entra: sem assinatura
-  // o Mac Apple Silicon se recusa a executá-lo. Assina cada binário antes do pacote.
-  const whisperDir = path.join(appPath, 'Contents', 'Resources', 'whisper');
-  if (fs.existsSync(whisperDir)) {
-    for (const f of fs.readdirSync(whisperDir)) {
-      if (f === 'whisper-cli' || f.endsWith('.dylib')) execFileSync('codesign', ['--force', '--sign', '-', path.join(whisperDir, f)], { stdio: 'inherit' });
-    }
-  }
 
   console.log(`  • ad-hoc signing  app=${path.relative(process.cwd(), appPath)}`);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });

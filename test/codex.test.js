@@ -30,8 +30,9 @@ test('parseCodexEvent: formato antigo ({ msg })', () => {
 });
 
 test('friendlyError traduz os erros mais comuns do Codex', () => {
-  assert.match(friendlyError('Error: Not logged in. Run codex login'), /codex login/);
-  assert.match(friendlyError('unexpected status 401 Unauthorized'), /autenticado/);
+  // Sem terminal: a mensagem leva ao botão "Entrar na conta" do Diagnóstico
+  assert.match(friendlyError('Error: Not logged in. Run codex login'), /Entrar na conta/);
+  assert.match(friendlyError('unexpected status 401 Unauthorized'), /não está conectado/);
   assert.match(friendlyError("You've hit your usage limit"), /Limite de uso/);
   assert.match(friendlyError('stream disconnected before completion'), /conexão/);
   assert.match(friendlyError('The model `xyz` does not exist'), /modelo/);

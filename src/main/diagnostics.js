@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const { ffmpegPath, run, clearCache } = require('./tools');
-const W = require('./whisper');
+const { MODELS, modelId, fmtBytes } = require('./engine');
 const { claudeInfo, SKILL_PATH } = require('./claude');
 const { codexInfo } = require('./codex');
 const { ENGINES, engineOf } = require('./ai');
@@ -12,17 +12,14 @@ const { ENGINES, engineOf } = require('./ai');
 function aiCheck(eng, info, selected) {
   const E = ENGINES[eng];
   const base = { id: eng, ai: true, selected, group: 'Resumo', label: `${E.cli}${selected ? ' — motor do resumo' : ''}` };
-  if (eng === 'claude' && !info.ok) {
-    return { ...base, state: selected ? 'error' : 'info', detail: selected ? 'Não instalado. O MeetRec instala para você (≈ 1 min, sem precisar de terminal).' : 'Não instalado (opcional, alternativa ao Codex).', action: { id: 'install-claude', label: 'Instalar Claude Code' } };
-  }
-  if (eng === 'claude' && info.auth?.known && !info.auth.loggedIn) {
-    return { ...base, state: selected ? 'error' : 'info', detail: `${info.version} · não conectado à sua conta Claude (precisa de assinatura Pro ou Max).`, action: { id: 'login-claude', label: 'Entrar na conta' } };
-  }
+  const other = eng === 'codex' ? 'Claude' : 'Codex';
+  const account = eng === 'codex' ? 'ChatGPT (Plus ou Pro)' : 'Claude (precisa de assinatura Pro ou Max)';
   if (!info.ok) {
-    return { ...base, state: selected ? 'error' : 'info', detail: selected ? `${info.message} Instale: ${E.install}` : `Não instalado (opcional, alternativa ao ${eng === 'codex' ? 'Claude' : 'Codex'}). Instale: ${E.install}`, action: { id: `open-${eng}-docs`, label: 'Como instalar' } };
+    return { ...base, state: selected ? 'error' : 'info', detail: selected ? 'Não instalado. O MeetRec instala para você (≈ 1 min, sem precisar de terminal).' : `Não instalado (opcional, alternativa ao ${other}).`, action: { id: `install-${eng}`, label: `Instalar ${eng === 'codex' ? 'Codex' : 'Claude Code'}` } };
   }
-  if (eng === 'codex' && !info.loggedIn) {
-    return { ...base, state: selected ? 'warn' : 'info', detail: `${info.version} · login não confirmado — rode "codex login" num terminal e entre com sua conta ChatGPT (se já fez, clique em Testar).`, action: { id: 'test-codex', label: 'Testar conexão' } };
+  const loggedOut = eng === 'codex' ? !info.loggedIn : info.auth?.known && !info.auth.loggedIn;
+  if (loggedOut) {
+    return { ...base, state: selected ? 'error' : 'info', detail: `${info.version} · não conectado à sua conta ${account}.`, action: { id: `login-${eng}`, label: 'Entrar na conta' } };
   }
   const who = info.auth?.loggedIn ? ` · conectado${info.auth.email ? ` como ${info.auth.email}` : ''}${info.auth.plan ? ` (plano ${info.auth.plan[0].toUpperCase()}${info.auth.plan.slice(1)})` : ''}` : '';
   return { ...base, state: selected ? 'ok' : 'info', detail: `${info.version}${who}${selected ? '' : ' · disponível como alternativa'}`, action: { id: `test-${eng}`, label: 'Testar conexão' } };
@@ -33,7 +30,7 @@ function bytes(n) {
   return Math.round(n / 1e6) + ' MB';
 }
 
-async function runChecks({ store, bridge, detector, models }) {
+async function runChecks({ store, bridge, detector, engine }) {
   clearCache();
   const s = store.get();
   const checks = [];
@@ -55,20 +52,25 @@ async function runChecks({ store, bridge, detector, models }) {
 
   // Transcrição
   if (s.engine === 'local') {
-    const bin = W.binaryPath();
-    add(bin
-      ? { id: 'whisper', group: 'Transcrição', label: 'Motor local (whisper.cpp)', state: 'ok', detail: 'Embutido no app — não precisa instalar nada.' }
-      : { id: 'whisper', group: 'Transcrição', label: 'Motor local (whisper.cpp)', state: 'error', detail: 'Não encontrado nesta instalação. Reinstale o MeetRec ou use Groq/OpenAI em Configurações → Transcrição.' });
-    const m = W.modelInfo(s.localModel);
-    const st = models.status(m.id);
-    add(st.ready
-      ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'ok', detail: `Baixado e pronto (${W.fmtBytes(m.size)}).` }
+    engine.forget(); // "Verificar novamente" enxerga um Python instalado depois
+    const py = await engine.find(s);
+    const label = 'Motor local (Python + faster-whisper)';
+    const where = { system: 'Python do sistema', app: 'Python do MeetRec', custom: 'Python escolhido nas Configurações' };
+    add(py
+      ? { id: 'whisper', group: 'Transcrição', label, state: 'ok', detail: `faster-whisper ${py.fw} · ${py.version} (${where[py.source]})` }
+      : engine.busy()
+        ? { id: 'whisper', group: 'Transcrição', label, state: 'warn', detail: 'Instalando…' }
+        : { id: 'whisper', group: 'Transcrição', label, state: 'error', detail: 'Não instalado. O MeetRec instala sozinho (~300 MB, cerca de 1 min, sem mexer no Python do sistema).', action: { id: 'install-engine', label: 'Instalar motor' } });
+    const m = MODELS[modelId(s.localModel)];
+    const st = engine.modelStatus(s.localModel);
+    if (py) add(st.ready
+      ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'ok', detail: 'Baixado e pronto.' }
       : st.downloading
-        ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Baixando… ${Math.floor((st.received / st.total) * 100)}%`, model: m.id }
-        : { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Ainda não baixado (${W.fmtBytes(st.total)}). Baixe agora ou ele será baixado na primeira transcrição.`, action: { id: 'download-model', label: 'Baixar agora' }, model: m.id });
+        ? { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Baixando… ${Math.floor((st.received / st.total) * 100)}%`, model: st.id }
+        : { id: 'model', group: 'Transcrição', label: `Modelo ${m.label}`, state: 'warn', detail: `Ainda não baixado (~${fmtBytes(m.size)}). Baixe agora ou ele será baixado na primeira transcrição.`, action: { id: 'download-model', label: 'Baixar agora' }, model: st.id });
   } else {
-    const name = s.engine === 'groq' ? 'Groq' : 'OpenAI';
-    const key = s.engine === 'groq' ? s.groqKey : s.openaiKey;
+    const name = 'OpenAI';
+    const key = s.openaiKey;
     add(key
       ? { id: 'cloudkey', group: 'Transcrição', label: `Chave de API ${name}`, state: 'ok', detail: 'Configurada (armazenada criptografada).', action: { id: 'test-cloud', label: 'Testar chave' } }
       : { id: 'cloudkey', group: 'Transcrição', label: `Chave de API ${name}`, state: 'error', detail: 'Não configurada. Vá em Configurações → Transcrição.' });

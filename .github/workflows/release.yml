@@ -25,8 +25,7 @@
 # baixam e instalam; Mac sem certificado e .deb/.rpm abrem a página da release).
 #
 # Por que uma máquina por arquitetura: o ffmpeg embutido (ffmpeg-static) é
-# baixado no npm ci, e o motor de transcrição (whisper.cpp) é preparado por
-# npm run whisper, para a arquitetura da máquina que faz o build.
+# baixado no npm ci para a arquitetura da máquina que faz o build.
 # Windows ARM não tem build próprio: o ffmpeg-static não publica binário para
 # win-arm64, e o instalador x64 roda nesses PCs pela emulação do Windows.
 
@@ -106,7 +105,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Sintaxe (JavaScript, módulos ES e JSON)
+      - name: Sintaxe (JavaScript, módulos ES, JSON e Python)
         run: npm run check
       - name: Testes
         run: npm test
@@ -131,13 +130,11 @@ jobs:
           - name: win-x64
             os: windows-latest
             args: --win nsis portable --x64
-          # Linux no 22.04: o whisper.cpp compilado aqui exige a glibc desta máquina ou mais nova;
-          # assim ele roda também no Ubuntu 22.04, Debian 12, Mint 21 e equivalentes
           - name: linux-x64
-            os: ubuntu-22.04
+            os: ubuntu-latest
             args: --linux AppImage deb rpm --x64
           - name: linux-arm64
-            os: ubuntu-22.04-arm
+            os: ubuntu-24.04-arm
             args: --linux AppImage deb rpm --arm64
     env:
       # Sem certificado: o macOS recebe assinatura ad-hoc (scripts/adhoc-sign.js).
@@ -155,7 +152,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q rpm libarchive-tools cmake build-essential
+          sudo apt-get install -y -q rpm libarchive-tools
           if [ "$(uname -m)" = "aarch64" ]; then
             sudo apt-get install -y -q ruby ruby-dev build-essential
             sudo gem install --no-document fpm
@@ -168,15 +165,11 @@ jobs:
       - name: Conferir o ffmpeg embutido
         shell: bash
         run: node -e "const p=require('ffmpeg-static');const fs=require('fs');if(!p||!fs.existsSync(p)){console.error('ffmpeg-static sem binário para esta máquina');process.exit(1)}console.log('ffmpeg:',p)"
-      - name: Motor de transcrição (whisper.cpp)
-        # Windows: binário oficial conferido por SHA-256 + runtime do Visual C++.
-        # macOS/Linux: compilado aqui (no Mac com Metal). Ver scripts/fetch-whisper.js
-        timeout-minutes: 25
-        run: npm run whisper
-      - name: Testar o motor de transcrição
-        # Baixa o modelo Básico e transcreve de verdade (no Mac, uma frase falada pelo "say")
-        timeout-minutes: 10
-        run: node scripts/smoke-whisper.js
+      - name: Testar a instalação automática do motor de transcrição
+        # Num PC "novo": instala Python + faster-whisper pelo código do app, baixa um modelo
+        # e transcreve de verdade (no Mac, uma frase falada pelo "say")
+        timeout-minutes: 15
+        run: node scripts/smoke-engine.js
       - name: Versão ${{ needs.prepare.outputs.version }}
         # Só nesta máquina: o commit da versão é feito no fim, se tudo passar
         run: npm version ${{ needs.prepare.outputs.version }} --no-git-tag-version --allow-same-version
@@ -188,15 +181,6 @@ jobs:
         run: node -e "const f='extension/manifest.json';const m=require('./'+f);m.version=process.env.VERSION;require('fs').writeFileSync(f,JSON.stringify(m,null,2)+'\n')"
       - name: Empacotar
         run: npx electron-builder ${{ matrix.args }} --publish never
-      - name: Conferir o motor dentro do pacote
-        # O que vai para o usuário: permissão de execução (Linux), assinatura (Mac) e bibliotecas juntas
-        shell: bash
-        run: |
-          BIN="$(find dist -path '*resources/whisper/whisper-cli*' -o -path '*Resources/whisper/whisper-cli' | grep -v '\.txt$' | head -1)"
-          if [ -z "$BIN" ]; then echo "::error::whisper-cli não está no pacote"; exit 1; fi
-          echo "Motor: $BIN"
-          "$BIN" --help > /dev/null
-          if [ "$RUNNER_OS" = "macOS" ]; then codesign --verify --verbose "$BIN"; fi
       - uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.name }}
@@ -258,7 +242,7 @@ jobs:
             echo
             echo "**Já usa o MeetRec?** O app avisa sozinho sobre esta versão: no Windows (e no AppImage) ela é baixada e instalada pelo próprio app; no Mac e nos pacotes .deb/.rpm o aviso abre esta página."
             echo
-            echo "**Requisitos:** nada para instalar à mão. Na primeira vez, o assistente do app baixa o modelo de transcrição e instala e conecta o Claude Code (precisa de uma conta Claude Pro ou Max para os resumos). Ou use Groq/OpenAI para transcrever na nuvem."
+            echo "**Requisitos:** nada para instalar à mão. Na primeira vez, o assistente do app instala o motor de transcrição (Python próprio + faster-whisper, sem mexer no Python do computador), baixa o modelo e instala e conecta o Claude Code ou o Codex (precisa de uma conta Claude Pro/Max ou ChatGPT Plus/Pro para os resumos). Quem já usa o MeetRec com Python continua com o mesmo motor."
             echo
             echo "macOS: o app não é notarizado — na primeira vez, clique com o botão direito → **Abrir**, e permita **Microfone** e **Gravação de Tela e Áudio do Sistema**. Windows: o SmartScreen pode pedir confirmação (**Mais informações → Executar assim mesmo**). Somas SHA-256: \`SHA256SUMS.txt\`."
             echo

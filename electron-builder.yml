@@ -16,21 +16,21 @@ asar: true
 files:
   - src/**/*
   - assets/**/*
+  - python/**/*
   - extension/**/*
   - package.json
   - "!**/*.map"
-# Executados fora do asar: o ffmpeg e a pasta da extensão (carregada no navegador pelo usuário)
+  - "!**/__pycache__/**"
+# Executados fora do asar: o ffmpeg, o script do Whisper (rodado pelo Python)
+# e a pasta da extensão (carregada no navegador pelo usuário)
 asarUnpack:
+  - python/**/*
   - extension/**/*
   - node_modules/ffmpeg-static/**/*
 
 extraResources:
   - from: LICENSE
     to: LICENSE.txt
-  # Motor de transcrição local (whisper.cpp), preparado por scripts/fetch-whisper.js
-  # (npm run whisper) para o sistema e a arquitetura desta máquina → resources/whisper/
-  - from: vendor/whisper
-    to: whisper
 
 # ── Atualização automática (src/main/updater.js) ─────────────────────────────
 # Gera os latest*.yml que o app instalado lê nas releases do GitHub. O CI usa

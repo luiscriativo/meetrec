@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { findClaude, needsShell, run } = require('./tools');
-const { authStatus } = require('./claude-setup');
+const { authStatus } = require('./ai-setup');
 const { UserError } = require('./transcribe');
 
 const SKILL_PATH = path.join(os.homedir(), '.claude', 'skills', 'resumo-reuniao', 'SKILL.md');

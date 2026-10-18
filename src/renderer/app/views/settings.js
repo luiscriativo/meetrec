@@ -1,7 +1,7 @@
 // Configurações.
 import { state, ctx, api } from '../ctx.js';
 import { $, $$, ic, esc, toast, prettyShortcut, relTime, confirmDialog, modal } from '../util.js';
-import { mountModelCard, mountClaudeCard } from '../setup-ui.js';
+import { mountModelCard, mountAiCard } from '../setup-ui.js';
 
 let root = null, sec = 'general', testStream = null, testRaf = null;
 
@@ -268,18 +268,16 @@ function transcription(b) {
   b.innerHTML = `
     <div class="card card-pad">
       <div class="lbl" style="font-weight:600;margin-bottom:10px">Motor de transcrição</div>
-      <div class="engine-cards">
-        ${eng('local', `${ic('shield', 14)} Local (Whisper)`, 'Roda no seu PC. Privado e gratuito. Mais lento em CPU.', ['privado', 'ok'])}
-        ${eng('groq', `${ic('bolt', 14)} Groq`, 'Whisper Large v3 na nuvem. Muito rápido; plano gratuito generoso.', ['rápido', 'accent'])}
-        ${eng('openai', `${ic('globe', 14)} OpenAI`, 'Whisper da OpenAI. Pago por minuto de áudio.', null)}
+      <div class="engine-cards" style="grid-template-columns:repeat(2, 1fr)">
+        ${eng('local', `${ic('shield', 14)} Local (Whisper)`, 'Roda no seu PC. Privado e gratuito.', ['privado', 'ok'])}
+        ${eng('openai', `${ic('globe', 14)} OpenAI`, 'Whisper da OpenAI na nuvem. Pago por minuto de áudio.', null)}
       </div>
     </div>
     <div class="card" style="margin-top:14px">
       ${s.engine === 'local' ? `
         <div class="card-pad setup-card" id="modelCard" style="border-bottom:1px solid var(--border)"></div>
-        <div class="field"><div><div class="lbl">Modelos baixados</div><div class="desc">Cada modelo ocupa de 60 MB a 1 GB. Apague os que não usa mais para liberar espaço.</div></div><div class="ctl"><button class="btn" id="cleanModels">${ic('trash', 14)} Apagar os outros modelos</button></div></div>
+        ${field('Python (avançado)', 'Deixe vazio: o MeetRec usa o Python que já tem o faster-whisper ou instala um só dele.', `<input class="input" data-k="pythonPath" data-health="1" value="${esc(s.pythonPath)}" placeholder="automático">`)}
       ` : ''}
-      ${s.engine === 'groq' ? field('Chave de API do Groq', 'Crie em <a href="#" data-url="https://console.groq.com/keys">console.groq.com/keys</a>. Fica salva criptografada neste computador.', `<input class="input" type="password" data-k="groqKey" data-health="1" value="${esc(s.groqKey)}" placeholder="gsk_…">`) : ''}
       ${s.engine === 'openai' ? field('Chave de API da OpenAI', 'Crie em <a href="#" data-url="https://platform.openai.com/api-keys">platform.openai.com/api-keys</a>. Fica salva criptografada.', `<input class="input" type="password" data-k="openaiKey" data-health="1" value="${esc(s.openaiKey)}" placeholder="sk-…">`) : ''}
       ${field('Idioma das reuniões', '', `<select class="select" data-k="language"><option value="pt" ${s.language === 'pt' ? 'selected' : ''}>Português</option><option value="en" ${s.language === 'en' ? 'selected' : ''}>Inglês</option><option value="es" ${s.language === 'es' ? 'selected' : ''}>Espanhol</option><option value="" ${!s.language ? 'selected' : ''}>Detectar automaticamente</option></select>`)}
       ${field('Vocabulário', 'Nomes de pessoas, empresas, siglas e termos técnicos que aparecem nas reuniões (separados por vírgula). Ajuda o Whisper a acertar.', `<textarea class="textarea" data-k="vocabulary" rows="3" placeholder="Ex.: PlanMat, SAP HANA, Libra APS, Ana Souza">${esc(s.vocabulary)}</textarea>`, 'stack')}
@@ -287,18 +285,12 @@ function transcription(b) {
   $$('[data-eng]', b).forEach((c) => (c.onclick = async () => { await save({ engine: c.dataset.eng }, 'Motor de transcrição alterado.'); ctx.runHealth(); draw(); }));
   $$('[data-url]', b).forEach((a) => (a.onclick = (e) => { e.preventDefault(); api.open(a.dataset.url); }));
   if ($('#modelCard')) mountModelCard($('#modelCard'));
-  if ($('#cleanModels')) $('#cleanModels').onclick = async () => {
-    const { freed } = await api.setup.modelCleanup();
-    toast(freed ? 'success' : 'info', freed ? `${Math.round(freed / 1e6)} MB liberados.` : 'Não há outros modelos baixados.');
-    if (sec === 'transcription') draw();
-  };
 }
 
 function summary(b) {
   const s = state.settings;
   const h = state.health || [];
   const sel = s.aiEngine === 'codex' ? 'codex' : 'claude';
-  const info = h.find((c) => c.id === sel);
   const skill = h.find((c) => c.id === 'skill');
   // Status de cada CLI no cartão de escolha (vem do Diagnóstico)
   const badge = (k) => {
@@ -322,13 +314,7 @@ function summary(b) {
         ${card('codex', `${ic('terminal', 14)} Codex CLI`, 'Conta ChatGPT Plus / Pro (OpenAI). O texto aparece quando o Codex termina.')}
       </div>
     </div>
-    ${!isCodex ? `<div class="card card-pad setup-card" id="claudeCard" style="margin-top:14px"></div>` : `<div class="card card-pad" style="display:flex;gap:14px;align-items:center;margin-top:14px">
-      <span class="logo" style="width:40px;height:40px;border-radius:12px">${ic('terminal', 20)}</span>
-      <div class="grow"><b>${isCodex ? 'Codex CLI' : 'Claude Code CLI'}</b><div class="muted" style="font-size:12.5px;margin-top:2px">${info ? esc(info.detail) : 'Verificando…'}</div></div>
-      <span class="chip ${info?.state === 'ok' ? 'ok' : info?.state === 'warn' ? 'warn' : 'err'}">${info?.state === 'ok' ? 'Conectado' : info?.state === 'warn' ? 'Sem login?' : 'Não encontrado'}</span>
-      ${info && info.state === 'error' ? `<button class="btn" id="aiDocs">${ic('external', 14)} Como instalar</button>` : ''}
-      <button class="btn" id="testAi">${ic('bolt', 14)} Testar</button>
-    </div>`}
+    <div class="card card-pad setup-card" id="aiCard" style="margin-top:14px"></div>
     <div class="card" style="margin-top:14px">
       ${isCodex ? `
         ${field('Caminho do Codex CLI', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="codexPath" data-health="1" value="${esc(s.codexPath)}" placeholder="auto (codex)">`)}
@@ -348,20 +334,12 @@ function summary(b) {
     // Checa de novo antes de avisar: o CLI pode ter sido instalado depois que o app abriu
     await ctx.runHealth();
     const [bt] = badge(k);
-    if (bt === 'não instalado') toast('warn', k === 'codex' ? 'O Codex CLI não foi encontrado. Instale com "npm i -g @openai/codex" e rode "codex login" num terminal.' : 'O Claude Code não está instalado. Use o botão "Instalar Claude Code" logo abaixo — leva 1 minuto.', { duration: 9000 });
-    else if (bt === 'sem login' && k === 'codex') toast('warn', 'Rode "codex login" num terminal e entre com sua conta ChatGPT. Depois clique em Testar.', { duration: 9000 });
+    const nm = k === 'codex' ? 'Codex' : 'Claude Code';
+    if (bt === 'não instalado') toast('warn', `O ${nm} não está instalado. Use o botão "Instalar ${nm}" logo abaixo — leva 1 minuto.`, { duration: 9000 });
+    else if (bt === 'sem login') toast('warn', `Falta entrar na sua conta: use o botão "Entrar" logo abaixo.`, { duration: 9000 });
     if (sec === 'summary' && root) draw();
   }));
-  if ($('#aiDocs')) $('#aiDocs').onclick = () => api.diag.action(`open-${sel}-docs`);
-  if ($('#claudeCard')) mountClaudeCard($('#claudeCard'), { onChange: () => {} });
-  if ($('#testAi')) $('#testAi').onclick = async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true; btn.innerHTML = `${ic('loader', 14, 'spin')} Testando…`;
-    const r = await api.diag.action(`test-${sel}`);
-    btn.disabled = false; btn.innerHTML = `${ic('bolt', 14)} Testar`;
-    toast(r.ok ? 'success' : 'error', r.message, { duration: r.ok ? 4000 : 10000 });
-    ctx.runHealth().then(() => { if (sec === 'summary' && root) draw(); });
-  };
+  if ($('#aiCard')) mountAiCard($('#aiCard'), sel);
 }
 
 function integrations(b) {

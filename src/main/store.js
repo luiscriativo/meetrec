@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
-const SECRET_KEYS = ['groqKey', 'openaiKey'];
+const SECRET_KEYS = ['openaiKey'];
 
 function defaults() {
   return {
@@ -28,9 +28,9 @@ function defaults() {
     notifications: true,
 
     autoProcess: true,
-    engine: 'local', // local | groq | openai
-    localModel: 'large-v3-turbo', // whisper.cpp (src/main/whisper.js)
-    groqKey: '',
+    engine: 'local', // local | openai
+    localModel: 'large-v3-turbo', // padrão de instalações novas (quem já usa mantém o seu)
+    pythonPath: '',
     openaiKey: '',
     vocabulary: '',
 
@@ -56,7 +56,6 @@ function defaults() {
     shortcutMarker: 'CommandOrControl+Shift+M',
     theme: 'system',
     onboarded: false,
-    whisperCpp: true, // false = instalação anterior à troca do Python pelo whisper.cpp (migração em main.js)
   };
 }
 
@@ -68,8 +67,9 @@ class Store extends EventEmitter {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       for (const k of SECRET_KEYS) raw[k] = this._decrypt(raw[k]);
-      if (raw.whisperCpp === undefined) raw.whisperCpp = false; // veio de uma versão com Python
-      delete raw.pythonPath;
+      // O Groq saiu do app: quem usava passa para a transcrição local
+      if (raw.engine === 'groq') raw.engine = 'local';
+      delete raw.groqKey;
       this.data = { ...this.data, ...raw };
     } catch { /* primeira execução */ }
     this.save();

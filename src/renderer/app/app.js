@@ -142,7 +142,9 @@ function renderSideStatus() {
   const eng = s.engine === 'local'
     ? [find('whisper'), find('model')].filter(Boolean).sort((a, b) => ['error', 'warn', 'info', 'ok'].indexOf(a.state) - ['error', 'warn', 'info', 'ok'].indexOf(b.state))[0]
     : find('cloudkey');
-  const engName = s.engine === 'local' ? (find('model')?.state === 'ok' || !find('model') ? 'Whisper local' : 'baixar modelo') : s.engine === 'groq' ? 'Groq' : 'OpenAI';
+  const engName = s.engine === 'local'
+    ? find('whisper') && find('whisper').state !== 'ok' ? 'instalar motor' : find('model') && find('model').state !== 'ok' ? 'baixar modelo' : 'Whisper local'
+    : 'OpenAI';
   rows.push(`<button class="stat" data-go="diagnostics"><span class="led ${eng ? eng.state : ''}"></span>Transcrição<span class="val">${esc(engName)}</span></button>`);
   const b = state.bridge;
   rows.push(`<button class="stat" data-go="settings" data-tab="integrations"><span class="led ${b.error ? 'error' : b.connected ? 'ok' : ''}"></span>Extensão<span class="val">${b.connected ? (b.inCall ? `em chamada · ${esc(b.platform || '')}` : 'conectada') : 'desconectada'}</span></button>`);
@@ -309,7 +311,6 @@ document.addEventListener('drop', async (e) => {
   renderSideStatus();
   navigate(rec.active ? { view: 'home' } : { view: 'home' });
   await ctx.runHealth();
-  // Primeira execução: assistente (Whisper + Claude sem terminal). Quem atualizou da versão com Python vê só o aviso do modelo.
+  // Primeira execução: assistente (motor de transcrição + Claude, sem terminal)
   if (!state.settings.onboarded) openWizard();
-  else if (state.settings.whisperNotice) openWizard({ mode: 'whisper' });
 })();
