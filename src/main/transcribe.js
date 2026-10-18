@@ -1,8 +1,10 @@
-// Motores de transcrição: local (faster-whisper) ou nuvem (Groq / OpenAI Whisper).
+// Motores de transcrição: local (whisper.cpp embutido) ou nuvem (Groq / OpenAI Whisper).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { ffmpegPath, resourcePath, run, findPython } = require('./tools');
+const crypto = require('crypto');
+const { ffmpegPath, run } = require('./tools');
+const W = require('./whisper');
 
 class UserError extends Error {
   constructor(msg, code) { super(msg); this.code = code; }
@@ -13,56 +15,111 @@ async function ffmpeg(args, label) {
   if (r.code !== 0) throw new Error(`ffmpeg falhou (${label}): ${r.err.slice(-400)}`);
 }
 
-async function transcribeLocal({ file, duration, settings, onProgress, onStatus, onChild }) {
-  const py = await findPython(settings.pythonPath);
-  if (!py) throw new UserError('Python 3 não encontrado. Instale o Python 3.9+ ou use um motor na nuvem (Groq/OpenAI) em Configurações.', 'no-python');
+// Pasta de trabalho e modelos do motor local — definidos pelo main (configureLocal)
+let local = { models: null, workDir: null };
+function configureLocal(opts) { local = { ...local, ...opts }; }
 
-  const wav = file.replace(/\.[^.]+$/, '') + '.16k.wav';
+// Códigos de saída do Windows que pedem uma mensagem específica
+const WIN_CRASH = {
+  3221225501: 'O processador deste computador não é compatível com o motor local. Use Groq ou OpenAI em Configurações → Transcrição.', // 0xC000001D
+  3221225781: 'Faltam arquivos do motor local nesta instalação. Reinstale o MeetRec.', // 0xC0000135
+};
+
+async function transcribeLocal({ file, duration, settings, onProgress, onStatus, onChild, isCancelled }) {
+  const cancelled = () => new UserError('Transcrição cancelada.', 'cancelled');
+  const bin = W.binaryPath();
+  if (!bin) throw new UserError('O motor de transcrição local não foi encontrado nesta instalação. Reinstale o MeetRec ou use Groq/OpenAI em Configurações → Transcrição.', 'no-engine');
+  const { models, workDir } = local;
+  const m = W.modelInfo(settings.localModel);
+
+  if (!models.isReady(m.id)) {
+    const say = (st) => {
+      const pct = st.total ? Math.floor((st.received / st.total) * 100) : 0;
+      const eta = st.eta != null ? ` · falta${st.eta >= 90 ? 'm ~' + Math.round(st.eta / 60) + ' min' : ' menos de 2 min'}` : '';
+      onStatus?.(`Baixando o modelo (só na 1ª vez): ${pct}% de ${W.fmtBytes(st.total)}${eta}`, 'downloading');
+    };
+    const onDl = (st) => { if (st.id === m.id && st.downloading) say(st); };
+    say(models.status(m.id));
+    models.on('progress', onDl);
+    // Cancelar a transcrição não espera o download acabar (ele segue em segundo plano e é reaproveitado)
+    let poll;
+    const userCancel = new Promise((_, reject) => { poll = setInterval(() => { if (isCancelled?.()) reject(cancelled()); }, 300); });
+    try { await Promise.race([models.ensure(m.id), userCancel]); } catch (e) {
+      if (e instanceof UserError) throw e;
+      throw new UserError(e.code === 'cancelled' ? 'Download do modelo cancelado.' : e.message, e.code === 'cancelled' ? 'cancelled' : 'model-download');
+    } finally { clearInterval(poll); models.off('progress', onDl); }
+  }
+
+  fs.mkdirSync(workDir, { recursive: true });
+  // Arquivos temporários na pasta de trabalho (fora da biblioteca, que pode estar no Google Drive),
+  // com nomes ASCII: o whisper-cli recebe só caminhos relativos a ela
+  const tag = crypto.randomBytes(4).toString('hex');
+  const wavName = `audio-${tag}.wav`;
+  const outBase = `out-${tag}`;
+  const wav = path.join(workDir, wavName);
+  const outJson = path.join(workDir, outBase + '.json');
+  // Caminho relativo só com ASCII; se não der (outra pasta/disco com acento), usa um link do
+  // arquivo dentro da pasta de trabalho (instantâneo no mesmo disco; senão, uma cópia)
+  const linked = [];
+  const rel = (p) => {
+    const r = path.relative(workDir, p).split(path.sep).join('/');
+    if (/^[\x20-\x7e]+$/.test(r) && !path.isAbsolute(r)) return r;
+    const local = path.join(workDir, path.basename(p));
+    try { fs.linkSync(p, local); } catch { fs.copyFileSync(p, local); }
+    linked.push(local);
+    return path.basename(p);
+  };
+
   onStatus?.('Preparando áudio para o Whisper…');
   await ffmpeg(['-i', file, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav], 'wav');
-  const outJson = file.replace(/\.[^.]+$/, '') + '.whisper.json';
-  const script = resourcePath('python', 'transcribe.py');
 
-  let lastError = '';
-  let buf = '';
-  const r = await run(py.cmd, [...py.args, '-u', script,
-    '--input', wav, '--output', outJson,
-    '--model', settings.localModel || 'small',
-    '--language', settings.language || 'pt',
-    '--duration', String(duration || 0),
-    '--prompt', settings.vocabulary ? `Vocabulário: ${settings.vocabulary}` : '',
+  if (isCancelled?.()) { try { fs.unlinkSync(wav); } catch {} throw cancelled(); }
+  const acp = await W.windowsAcp(run);
+  const args = W.buildArgs({
+    model: rel(models.file(m.id)),
+    vad: rel(models.vadFile()),
+    input: wavName,
+    outBase,
+    language: settings.language || 'pt',
+    prompt: W.argText(settings.vocabulary ? `Vocabulário: ${settings.vocabulary}` : '', acp),
     // Núcleos físicos (≈ metade dos lógicos) rendem mais no Whisper e deixam folga para o resto do PC
-    '--threads', String(Math.max(2, Math.floor(os.cpus().length / 2))),
-  ], {
-    env: { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    threads: Math.max(2, Math.floor(os.cpus().length / 2)),
+  });
+
+  onStatus?.(`Carregando o modelo ${m.label}…`, 'loading');
+  let buf = '', errTail = '', stage = 'loading';
+  const r = await run(bin, args, {
+    cwd: workDir,
     onSpawn: onChild,
+    onStderr: (d) => {
+      errTail = (errTail + d).slice(-4000);
+      if (stage === 'loading' && /whisper_vad/.test(d)) { stage = 'vad'; onStatus?.('Encontrando os trechos com fala…', 'vad'); }
+    },
     onStdout: (d) => {
       buf += d;
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim();
+        const seg = W.parseSegmentLine(buf.slice(0, i));
         buf = buf.slice(i + 1);
-        if (!line) continue;
-        try {
-          const ev = JSON.parse(line);
-          if (ev.type === 'progress') onProgress?.(ev.value);
-          else if (ev.type === 'status') onStatus?.(ev.message, ev.code);
-          else if (ev.type === 'segment') onStatus?.(`“${ev.text.slice(0, 90)}”`, 'segment');
-          else if (ev.type === 'error') lastError = ev.code === 'missing'
-            ? 'O motor local (faster-whisper) não está instalado. Vá em Diagnóstico → "Instalar motor local".'
-            : ev.message;
-        } catch { /* linha não-JSON */ }
+        if (!seg) continue;
+        if (stage !== 'transcribing') { stage = 'transcribing'; onStatus?.('Transcrevendo…', 'transcribing'); }
+        if (duration) onProgress?.(Math.min(0.999, seg.end / duration));
+        if (seg.text) onStatus?.(`“${seg.text.slice(0, 90)}”`, 'segment');
       }
     },
   });
-  try { fs.unlinkSync(wav); } catch {}
+  for (const f of [wav, ...linked]) { try { fs.unlinkSync(f); } catch {} }
   if (r.code !== 0 || !fs.existsSync(outJson)) {
+    try { fs.unlinkSync(outJson); } catch {}
     if (r.code === null) throw new UserError('Transcrição cancelada.', 'cancelled');
-    throw new UserError(lastError || `O Whisper local falhou: ${r.err.slice(-500)}`, 'local-failed');
+    if (WIN_CRASH[r.code]) throw new UserError(WIN_CRASH[r.code], 'local-failed');
+    const why = errTail.split(/\r?\n/).filter((l) => /error|failed|unable/i.test(l)).slice(-3).join(' · ') || errTail.slice(-300);
+    throw new UserError(`O Whisper local falhou (código ${r.code}): ${why}`, 'local-failed');
   }
   const data = JSON.parse(fs.readFileSync(outJson, 'utf8'));
   try { fs.unlinkSync(outJson); } catch {}
-  return data.segments || [];
+  onProgress?.(1);
+  return W.segmentsFromJson(data);
 }
 
 const CLOUD = {
@@ -136,4 +193,4 @@ function transcribe(opts) {
   return opts.settings.engine === 'local' ? transcribeLocal(opts) : transcribeCloud(opts);
 }
 
-module.exports = { transcribe, UserError };
+module.exports = { transcribe, configureLocal, UserError };

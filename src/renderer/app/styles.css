@@ -358,3 +358,35 @@ a { color: var(--accent); }
 .update-banner .t { font-weight: 600; font-size: 13.5px; }
 .update-banner .s { font-size: 12px; color: var(--muted); margin-top: 1px; }
 .update-banner .s a { cursor: pointer; }
+
+/* ───────── Primeiro uso: assistente e cartões de configuração (setup-ui.js) ───────── */
+.wizard-bg { position: fixed; inset: 0; z-index: 95; display: grid; place-items: center; padding: 20px; background: rgba(10, 10, 20, .5); backdrop-filter: blur(4px); animation: fade .2s; }
+.wizard { width: min(620px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow-lg); padding: 26px 28px 20px; animation: tin .22s; }
+.wz-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }
+.wz-dots i { width: 26px; height: 4px; border-radius: 4px; background: var(--surface-3); transition: background .2s; }
+.wz-dots i.on { background: var(--accent); }
+.wz-dots i.done { background: var(--accent-soft); }
+.wz-head { text-align: center; margin-bottom: 18px; }
+.wz-head h2 { margin: 12px 0 6px; font-size: 21px; letter-spacing: -.01em; }
+.wz-head p { margin: 0 auto; max-width: 470px; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
+.wz-logo { width: 54px; height: 54px; border-radius: 16px; display: inline-grid; place-items: center; color: #fff; background: var(--grad); box-shadow: 0 8px 24px rgba(124, 92, 255, .35); }
+.wz-body { display: flex; flex-direction: column; gap: 10px; }
+.wz-foot { display: flex; align-items: center; gap: 8px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+.wz-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.wz-plan > div { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: 13px; line-height: 1.45; }
+.wz-plan .ic { color: var(--accent); margin-top: 1px; flex-shrink: 0; }
+.wz-eng { grid-template-columns: 1fr 1fr; }
+.setup-lbl { display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+.setup-card { display: flex; flex-direction: column; gap: 10px; }
+.setup-status { display: flex; gap: 12px; align-items: center; padding: 13px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); font-size: 13px; }
+.setup-status > .ic { flex-shrink: 0; align-self: flex-start; margin-top: 1px; }
+.setup-status .muted { font-size: 12.5px; line-height: 1.45; margin-top: 2px; }
+.setup-status.ok { background: var(--ok-soft); border-color: transparent; }
+.setup-status.ok > .ic { color: var(--ok); }
+.setup-status.busy > .ic { color: var(--accent); }
+.setup-status.err { background: var(--rec-soft); border-color: transparent; }
+.setup-status.err > .ic { color: var(--rec); }
+.setup-status.idle > .ic { color: var(--muted); }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; align-self: flex-start; }
+.linkish:hover { text-decoration: underline; }
+@media (max-width: 560px) { .wz-eng { grid-template-columns: 1fr; } .setup-status { flex-wrap: wrap; } }

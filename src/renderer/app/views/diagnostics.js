@@ -2,7 +2,8 @@
 import { state, ctx, api } from '../ctx.js';
 import { $, $$, ic, esc, toast } from '../util.js';
 
-let root = null, running = false, logText = '', busyAction = null, micCheck = null;
+let root = null, running = false, logText = '', busyAction = null, micCheck = null, claudeUrl = null;
+const LONG = ['download-model', 'install-claude', 'login-claude', 'test-cloud', 'test-claude', 'test-codex'];
 
 export function topbar() {
   return `<h1>${ic('activity', 17)} Diagnóstico</h1><div class="grow"></div><button class="btn no-drag" id="rerun">${ic('refresh', 14)} Verificar novamente</button>`;
@@ -61,6 +62,7 @@ function draw() {
         <div>${c.action ? `<button class="btn sm ${c.state === 'error' ? 'primary' : ''}" data-act="${c.action.id}" ${busyAction ? 'disabled' : ''}>${busyAction === c.action.id ? ic('loader', 13, 'spin') : ''} ${esc(c.action.label)}</button>` : ''}</div>
       </div>`).join('')}</div>`).join('')}
     ${!checks.length ? `<div class="empty">${ic('loader', 24, 'spin')}</div>` : ''}
+    ${claudeUrl ? `<div class="banner info" style="margin-top:12px">${ic('info', 16)}<span class="grow">Termine o login na janela do navegador que abriu. Não abriu?</span><button class="btn sm" id="openLogin">${ic('external', 13)} Abrir página de login</button></div>` : ''}
     ${logText ? `<div class="section-title">Log</div><div class="log" id="log">${esc(logText)}</div>` : ''}
     <div class="section-title">Como funciona</div>
     <div class="card card-pad" style="line-height:1.6;color:var(--text-2);font-size:13.5px">
@@ -71,17 +73,20 @@ function draw() {
     </div>
   </div>`;
   $$('[data-act]', root).forEach((b) => (b.onclick = () => doAction(b.dataset.act)));
+  const ol = $('#openLogin'); if (ol) ol.onclick = () => api.open(claudeUrl);
   const lg = $('#log'); if (lg) lg.scrollTop = lg.scrollHeight;
 }
 
 async function doAction(a) {
   busyAction = a;
-  if ((['install-whisper', 'download-model'].includes(a) || a.startsWith('test-claude') || a.startsWith('test-codex'))) logText = '';
+  if (['install-claude', 'login-claude'].includes(a) || a.startsWith('test-claude') || a.startsWith('test-codex')) logText = '';
+  claudeUrl = null;
   draw();
   const r = await api.diag.action(a);
   busyAction = null;
+  claudeUrl = null;
   if (r.message) toast(r.ok ? 'success' : 'error', r.message, { duration: 6000 });
-  if ((['install-whisper', 'download-model', 'test-cloud', 'test-claude', 'test-codex'].includes(a))) await rerun(); else draw();
+  if (LONG.includes(a)) await rerun(); else draw();
 }
 
 export function onEvent(type, p) {
@@ -92,4 +97,20 @@ export function onEvent(type, p) {
     const lg = $('#log');
     if (lg) { lg.textContent = logText; lg.scrollTop = lg.scrollHeight; } else draw();
   } else if (type === 'health' && !running) draw();
+  else if (type === 'model-progress') {
+    // Atualiza só a linha do modelo, sem verificar tudo de novo
+    const c = (state.health || []).find((x) => x.id === 'model' && x.model === p.id);
+    if (!c || !p.downloading) return;
+    const pct = p.total ? Math.floor((p.received / p.total) * 100) : 0;
+    const mb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1).replace('.', ',')} GB` : `${Math.round(n / 1e6)} MB`);
+    const eta = p.eta == null ? '' : ` · falta ${p.eta < 60 ? 'menos de 1 min' : `~${Math.round(p.eta / 60)} min`}`;
+    c.state = 'warn';
+    c.detail = `Baixando… ${pct}% · ${mb(p.received)} de ${mb(p.total)}${eta}`;
+    delete c.action;
+    draw();
+  } else if (type === 'claude-setup') {
+    if (p.log != null && (busyAction === 'install-claude' || busyAction === 'login-claude')) logText = p.log;
+    claudeUrl = p.phase === 'logging-in' ? p.url : null;
+    draw();
+  }
 }

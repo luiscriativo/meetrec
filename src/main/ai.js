@@ -4,7 +4,8 @@ const { runClaude, claudeInfo } = require('./claude');
 const { runCodex, codexInfo } = require('./codex');
 
 const ENGINES = {
-  claude: { name: 'Claude', cli: 'Claude Code', docs: 'https://docs.claude.com/en/docs/claude-code/setup', install: 'npm i -g @anthropic-ai/claude-code' },
+  // Claude: o app instala e faz o login sozinho (claude-setup.js); o comando fica só como referência
+  claude: { name: 'Claude', cli: 'Claude Code', docs: 'https://code.claude.com/docs/en/setup', install: 'Diagnóstico → "Instalar Claude Code"' },
   codex: { name: 'Codex', cli: 'Codex CLI', docs: 'https://developers.openai.com/codex/cli', install: 'npm i -g @openai/codex' },
 };
 

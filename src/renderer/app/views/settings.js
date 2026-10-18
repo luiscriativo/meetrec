@@ -1,6 +1,7 @@
 // Configurações.
 import { state, ctx, api } from '../ctx.js';
 import { $, $$, ic, esc, toast, prettyShortcut, relTime, confirmDialog, modal } from '../util.js';
+import { mountModelCard, mountClaudeCard } from '../setup-ui.js';
 
 let root = null, sec = 'general', testStream = null, testRaf = null;
 
@@ -13,14 +14,6 @@ const SECTIONS = [
   ['shortcuts', 'keyboard', 'Atalhos'],
 ];
 
-const MODELS = [
-  ['tiny', 'Tiny', 'Muito rápido, menos preciso (~75 MB)'],
-  ['base', 'Base', 'Rápido (~150 MB)'],
-  ['small', 'Small', 'Equilíbrio recomendado (~480 MB)'],
-  ['medium', 'Medium', 'Mais preciso, mais lento (~1,5 GB)'],
-  ['large-v3-turbo', 'Large v3 Turbo', 'Ótima precisão, pesado (~1,6 GB)'],
-  ['large-v3', 'Large v3', 'Máxima precisão, bem lento em CPU (~3 GB)'],
-];
 
 export function topbar() { return `<h1>${ic('settings', 17)} Configurações</h1>`; }
 
@@ -283,9 +276,8 @@ function transcription(b) {
     </div>
     <div class="card" style="margin-top:14px">
       ${s.engine === 'local' ? `
-        ${field('Modelo Whisper', 'Modelos maiores são mais precisos e mais lentos. O download acontece na primeira vez.', `<select class="select" data-k="localModel" data-health="1">${MODELS.map(([k, n, d]) => `<option value="${k}" ${s.localModel === k ? 'selected' : ''}>${n} — ${d}</option>`).join('')}</select>`)}
-        ${field('Python', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="pythonPath" data-health="1" value="${esc(s.pythonPath)}" placeholder="auto (python / python3)">`)}
-        <div class="field"><div><div class="lbl">Instalação do motor local</div><div class="desc">Instala o pacote faster-whisper e baixa o modelo escolhido.</div></div><div class="ctl"><button class="btn" id="goDiag">${ic('activity', 14)} Ir para o diagnóstico</button></div></div>
+        <div class="card-pad setup-card" id="modelCard" style="border-bottom:1px solid var(--border)"></div>
+        <div class="field"><div><div class="lbl">Modelos baixados</div><div class="desc">Cada modelo ocupa de 60 MB a 1 GB. Apague os que não usa mais para liberar espaço.</div></div><div class="ctl"><button class="btn" id="cleanModels">${ic('trash', 14)} Apagar os outros modelos</button></div></div>
       ` : ''}
       ${s.engine === 'groq' ? field('Chave de API do Groq', 'Crie em <a href="#" data-url="https://console.groq.com/keys">console.groq.com/keys</a>. Fica salva criptografada neste computador.', `<input class="input" type="password" data-k="groqKey" data-health="1" value="${esc(s.groqKey)}" placeholder="gsk_…">`) : ''}
       ${s.engine === 'openai' ? field('Chave de API da OpenAI', 'Crie em <a href="#" data-url="https://platform.openai.com/api-keys">platform.openai.com/api-keys</a>. Fica salva criptografada.', `<input class="input" type="password" data-k="openaiKey" data-health="1" value="${esc(s.openaiKey)}" placeholder="sk-…">`) : ''}
@@ -294,7 +286,12 @@ function transcription(b) {
     </div>`;
   $$('[data-eng]', b).forEach((c) => (c.onclick = async () => { await save({ engine: c.dataset.eng }, 'Motor de transcrição alterado.'); ctx.runHealth(); draw(); }));
   $$('[data-url]', b).forEach((a) => (a.onclick = (e) => { e.preventDefault(); api.open(a.dataset.url); }));
-  if ($('#goDiag')) $('#goDiag').onclick = () => ctx.navigate('diagnostics');
+  if ($('#modelCard')) mountModelCard($('#modelCard'));
+  if ($('#cleanModels')) $('#cleanModels').onclick = async () => {
+    const { freed } = await api.setup.modelCleanup();
+    toast(freed ? 'success' : 'info', freed ? `${Math.round(freed / 1e6)} MB liberados.` : 'Não há outros modelos baixados.');
+    if (sec === 'transcription') draw();
+  };
 }
 
 function summary(b) {
@@ -308,7 +305,7 @@ function summary(b) {
     const c = (state.health || []).find((x) => x.id === k); // sempre o diagnóstico mais recente
     if (!c) return ['verificando…', ''];
     if (/não instalado|não encontrado/i.test(c.detail)) return ['não instalado', 'err'];
-    if (/login não confirmado/i.test(c.detail)) return ['sem login', 'warn'];
+    if (/login não confirmado|não conectado/i.test(c.detail)) return ['sem login', 'warn'];
     return ['instalado', 'ok'];
   };
   const card = (k, t, d) => {
@@ -325,13 +322,13 @@ function summary(b) {
         ${card('codex', `${ic('terminal', 14)} Codex CLI`, 'Conta ChatGPT Plus / Pro (OpenAI). O texto aparece quando o Codex termina.')}
       </div>
     </div>
-    <div class="card card-pad" style="display:flex;gap:14px;align-items:center;margin-top:14px">
+    ${!isCodex ? `<div class="card card-pad setup-card" id="claudeCard" style="margin-top:14px"></div>` : `<div class="card card-pad" style="display:flex;gap:14px;align-items:center;margin-top:14px">
       <span class="logo" style="width:40px;height:40px;border-radius:12px">${ic('terminal', 20)}</span>
       <div class="grow"><b>${isCodex ? 'Codex CLI' : 'Claude Code CLI'}</b><div class="muted" style="font-size:12.5px;margin-top:2px">${info ? esc(info.detail) : 'Verificando…'}</div></div>
       <span class="chip ${info?.state === 'ok' ? 'ok' : info?.state === 'warn' ? 'warn' : 'err'}">${info?.state === 'ok' ? 'Conectado' : info?.state === 'warn' ? 'Sem login?' : 'Não encontrado'}</span>
       ${info && info.state === 'error' ? `<button class="btn" id="aiDocs">${ic('external', 14)} Como instalar</button>` : ''}
       <button class="btn" id="testAi">${ic('bolt', 14)} Testar</button>
-    </div>
+    </div>`}
     <div class="card" style="margin-top:14px">
       ${isCodex ? `
         ${field('Caminho do Codex CLI', 'Deixe vazio para detectar automaticamente.', `<input class="input" data-k="codexPath" data-health="1" value="${esc(s.codexPath)}" placeholder="auto (codex)">`)}
@@ -351,12 +348,13 @@ function summary(b) {
     // Checa de novo antes de avisar: o CLI pode ter sido instalado depois que o app abriu
     await ctx.runHealth();
     const [bt] = badge(k);
-    if (bt === 'não instalado') toast('warn', k === 'codex' ? 'O Codex CLI não foi encontrado. Instale com "npm i -g @openai/codex" e rode "codex login" num terminal.' : 'O Claude Code não foi encontrado. Veja "Como instalar".', { duration: 9000 });
-    else if (bt === 'sem login') toast('warn', 'Rode "codex login" num terminal e entre com sua conta ChatGPT. Depois clique em Testar.', { duration: 9000 });
+    if (bt === 'não instalado') toast('warn', k === 'codex' ? 'O Codex CLI não foi encontrado. Instale com "npm i -g @openai/codex" e rode "codex login" num terminal.' : 'O Claude Code não está instalado. Use o botão "Instalar Claude Code" logo abaixo — leva 1 minuto.', { duration: 9000 });
+    else if (bt === 'sem login' && k === 'codex') toast('warn', 'Rode "codex login" num terminal e entre com sua conta ChatGPT. Depois clique em Testar.', { duration: 9000 });
     if (sec === 'summary' && root) draw();
   }));
   if ($('#aiDocs')) $('#aiDocs').onclick = () => api.diag.action(`open-${sel}-docs`);
-  $('#testAi').onclick = async (e) => {
+  if ($('#claudeCard')) mountClaudeCard($('#claudeCard'), { onChange: () => {} });
+  if ($('#testAi')) $('#testAi').onclick = async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true; btn.innerHTML = `${ic('loader', 14, 'spin')} Testando…`;
     const r = await api.diag.action(`test-${sel}`);
