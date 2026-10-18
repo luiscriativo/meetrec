@@ -10,12 +10,12 @@ dist/
 out/
 builder-effective-config.yaml
 builder-debug.yml
-# whisper.cpp baixado/compilado por scripts/fetch-whisper.js
-vendor/
 
-# ── Python (scripts/make-demo-data.py) ──────────────────────────────────────
+# ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+.venv/
+venv/
 
 # ── Áudios e dados de teste (gravações reais nunca vão para o repositório) ───
 *.webm

@@ -3,7 +3,8 @@ import { state, ctx, api } from '../ctx.js';
 import { $, $$, ic, esc, toast } from '../util.js';
 
 let root = null, running = false, logText = '', busyAction = null, micCheck = null, claudeUrl = null;
-const LONG = ['download-model', 'install-claude', 'login-claude', 'test-cloud', 'test-claude', 'test-codex'];
+const LONG = ['install-engine', 'download-model', 'install-claude', 'login-claude', 'install-codex', 'login-codex', 'test-cloud', 'test-claude', 'test-codex'];
+const SETUP_ACT = /^(install|login)-(claude|codex)$/;
 
 export function topbar() {
   return `<h1>${ic('activity', 17)} Diagnóstico</h1><div class="grow"></div><button class="btn no-drag" id="rerun">${ic('refresh', 14)} Verificar novamente</button>`;
@@ -79,7 +80,7 @@ function draw() {
 
 async function doAction(a) {
   busyAction = a;
-  if (['install-claude', 'login-claude'].includes(a) || a.startsWith('test-claude') || a.startsWith('test-codex')) logText = '';
+  if (a === 'install-engine' || SETUP_ACT.test(a) || a.startsWith('test-claude') || a.startsWith('test-codex')) logText = '';
   claudeUrl = null;
   draw();
   const r = await api.diag.action(a);
@@ -108,8 +109,14 @@ export function onEvent(type, p) {
     c.detail = `Baixando… ${pct}% · ${mb(p.received)} de ${mb(p.total)}${eta}`;
     delete c.action;
     draw();
-  } else if (type === 'claude-setup') {
-    if (p.log != null && (busyAction === 'install-claude' || busyAction === 'login-claude')) logText = p.log;
+  } else if (type === 'engine-setup') {
+    if (busyAction !== 'install-engine') return;
+    if (p.log != null) logText = p.log;
+    const c = (state.health || []).find((x) => x.id === 'whisper');
+    if (c && p.phase === 'installing') { c.state = 'warn'; c.detail = `Instalando… etapa ${p.step || 1} de ${p.steps || 3}: ${p.message || ''}`; }
+    draw();
+  } else if (type === 'ai-setup') {
+    if (p.log != null && busyAction === `${busyAction?.split('-')[0]}-${p.engine}` && SETUP_ACT.test(busyAction)) logText = p.log;
     claudeUrl = p.phase === 'logging-in' ? p.url : null;
     draw();
   }

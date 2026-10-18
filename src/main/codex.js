@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const { findCodex, needsShell, run, isWin } = require('./tools');
 const { UserError } = require('./transcribe');
 
-const INSTALL_HINT = 'Instale com "npm i -g @openai/codex" e entre com sua conta ChatGPT rodando "codex login" num terminal.';
+const INSTALL_HINT = 'Vá em Diagnóstico → "Instalar Codex" e depois "Entrar na conta" (sem terminal).';
 
 // Só caracteres seguros em valores que viram argumentos (no Windows o .cmd passa pelo cmd.exe)
 const safe = (v) => String(v || '').trim().replace(/[^\w.\-:/]/g, '');
@@ -15,7 +15,7 @@ const safe = (v) => String(v || '').trim().replace(/[^\w.\-:/]/g, '');
 function friendlyError(text) {
   const t = (text || '').toLowerCase();
   if (/not logged in|codex login|please log ?in|unauthorized|\b401\b|authentication|token.*expired|refresh token/.test(t))
-    return 'O Codex CLI não está autenticado. Abra um terminal, rode "codex login" e entre com sua conta ChatGPT.';
+    return 'O Codex não está conectado à sua conta ChatGPT. Vá em Diagnóstico → "Entrar na conta".';
   if (/usage limit|rate limit|\b429\b|quota|limit reached/.test(t))
     return 'Limite de uso do Codex/ChatGPT atingido. Tente novamente mais tarde (ou troque para o Claude em Configurações → Resumo).';
   if (/enotfound|network|econnrefused|connection (error|refused)|stream disconnected/.test(t))

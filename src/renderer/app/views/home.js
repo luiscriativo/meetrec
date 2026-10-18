@@ -165,7 +165,7 @@ async function renderLive() {
     const s = state.settings;
     const health = state.health || [];
     const claude = aiHealth();
-    const engName = s.engine === 'local' ? `Whisper local · ${s.localModel}` : s.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
+    const engName = s.engine === 'local' ? `Whisper local · ${s.localModel}` : 'OpenAI Whisper';
     const sugg = suggestionHtml();
     area.innerHTML = `
       <div class="card hero">

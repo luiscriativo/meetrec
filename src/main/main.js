@@ -14,9 +14,9 @@ const { Bridge } = require('./bridge');
 const { MeetingDetector } = require('./detector');
 const { Updater } = require('./updater');
 const { runChecks } = require('./diagnostics');
-const { ModelManager, modelId, MODELS, VAD, DEFAULT_MODEL } = require('./whisper');
+const { Engine, modelId, MODELS, DEFAULT_MODEL } = require('./engine');
 const { configureLocal } = require('./transcribe');
-const { ClaudeSetup } = require('./claude-setup');
+const { CliSetup, CLIS } = require('./ai-setup');
 const { runAI, engineOf, ENGINES } = require('./ai');
 const { ffmpegPath, run, resourcePath, clearCache } = require('./tools');
 const { fmtTime, transcriptToText } = require('./speakers');
@@ -49,12 +49,20 @@ const devProfile = !app.isPackaged && process.argv.find((a) => a.startsWith('--u
 if (devProfile) app.setPath('userData', path.resolve(devProfile.slice('--user-data='.length)));
 // Desenvolvimento: simula situações do Claude Code sem mexer na instalação real
 //   --claude-config=<pasta>  conta não conectada (configuração vazia)
-//   --hide-claude            "não instalado"
+//   --hide-claude / --hide-codex   "não instalado"
 //   --fake-claude-install    instalador de mentira (progresso + log, não instala nada)
+//   --hide-python            simula um PC sem Python (o app instala o motor próprio)
+//   --hf-home=<pasta>        cache de modelos separado (não mexe no do usuário)
 if (!app.isPackaged) {
+  if (process.argv.includes('--hide-python')) process.env.MEETREC_DEV_HIDE_PYTHON = '1';
+  const hf = process.argv.find((a) => a.startsWith('--hf-home='));
+  if (hf) process.env.HF_HOME = path.resolve(hf.slice('--hf-home='.length));
   const cfg = process.argv.find((a) => a.startsWith('--claude-config='));
   if (cfg) process.env.CLAUDE_CONFIG_DIR = path.resolve(cfg.slice('--claude-config='.length));
+  const cxh = process.argv.find((a) => a.startsWith('--codex-home='));
+  if (cxh) process.env.CODEX_HOME = path.resolve(cxh.slice('--codex-home='.length)); // Codex sem login, isolado
   if (process.argv.includes('--hide-claude')) process.env.MEETREC_DEV_HIDE_CLAUDE = '1';
+  if (process.argv.includes('--hide-codex')) process.env.MEETREC_DEV_HIDE_CODEX = '1';
   if (process.argv.includes('--fake-claude-install')) process.env.MEETREC_DEV_FAKE_INSTALL = '1';
 }
 
@@ -62,7 +70,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'meetrec-media', privileges: { stream: true, supportFetchAPI: true, bypassCSP: true, standard: true } }]);
 
-let store, library, pipeline, bridge, detector, updater, tray, models, claudeSetup;
+let store, library, pipeline, bridge, detector, updater, tray, engine, aiSetup;
 let mainWin = null, overlayWin = null, recorderWin = null;
 let quitting = false;
 let hiddenHintShown = false;
@@ -910,18 +918,27 @@ function setupIpc() {
   });
 
   // Diagnóstico
-  ipcMain.handle('diag:run', () => runChecks({ store, bridge, detector, models }));
+  ipcMain.handle('diag:run', () => runChecks({ store, bridge, detector, engine }));
   ipcMain.handle('diag:action', async (e, action) => {
     const log = (t) => e.sender.send('evt', { type: 'diag-log', payload: String(t) });
     try {
-      if (action === 'download-model') { await models.ensure(store.get('localModel')); return { ok: true, message: 'Modelo baixado e pronto.' }; }
-      if (action === 'install-claude') {
-        const st = await claudeSetup.install(store.get('claudePath'));
-        return { ok: true, message: `Claude Code ${st.version} instalado! Agora clique em "Entrar na conta".` };
+      if (action === 'install-engine') { const p = await engine.install(); return { ok: true, message: `Motor de transcrição instalado (${p.version} · faster-whisper ${p.fw}).` }; }
+      if (action === 'download-model') {
+        const py = await engine.find(store.get());
+        if (!py) throw new Error('Instale o motor de transcrição primeiro.');
+        await engine.ensureModel(store.get('localModel'), py.cmd);
+        return { ok: true, message: 'Modelo baixado e pronto.' };
       }
-      if (action === 'login-claude') {
-        const st = await claudeSetup.login(store.get('claudePath'));
-        return { ok: true, message: st.email ? `Conectado como ${st.email} ✅` : 'Conta conectada ✅' };
+      const setupAct = action.match(/^(install|login)-(claude|codex)$/);
+      if (setupAct) {
+        const [, what, eng] = setupAct;
+        const custom = store.get(eng === 'codex' ? 'codexPath' : 'claudePath');
+        if (what === 'install') {
+          const st = await aiSetup[eng].install(custom);
+          return { ok: true, message: `${CLIS[eng].name} ${st.version} instalado! Agora clique em "Entrar na conta".` };
+        }
+        const st = await aiSetup[eng].login(custom);
+        return { ok: true, message: st.email ? `Conectado como ${st.email} ✅` : `Conta ${CLIS[eng].account} conectada ✅` };
       }
       if (action === 'open-storage') { shell.openPath(store.get('storageDir')); return { ok: true }; }
       const docs = action.match(/^open-(claude|codex)-docs$/);
@@ -940,8 +957,8 @@ function setupIpc() {
       }
       if (action === 'test-cloud') {
         const s = store.get();
-        const url = s.engine === 'groq' ? 'https://api.groq.com/openai/v1/models' : 'https://api.openai.com/v1/models';
-        const key = s.engine === 'groq' ? s.groqKey : s.openaiKey;
+        const url = 'https://api.openai.com/v1/models';
+        const key = s.openaiKey;
         const r = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
         if (!r.ok) throw new Error(r.status === 401 ? 'Chave inválida (401).' : `Resposta ${r.status}`);
         return { ok: true, message: 'Chave válida ✅' };
@@ -955,25 +972,37 @@ function setupIpc() {
 
   ipcMain.handle('bridge:status', () => bridge.status());
 
-  // Primeiro uso: modelo do Whisper e Claude Code (instalação e login) sem terminal
+  // Primeiro uso sem terminal: motor de transcrição (Python + faster-whisper), modelo e Claude Code
   const modelOf = (id) => modelId(id || store.get('localModel'));
-  ipcMain.handle('setup:catalog', () => ({ models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label, desc: m.desc, size: m.size + VAD.size, recommended: !!m.recommended })), defaultModel: DEFAULT_MODEL }));
-  ipcMain.handle('setup:modelStatus',(_e, id) => ({ ...models.status(modelOf(id)), downloaded: models.downloaded() }));
+  ipcMain.handle('setup:catalog', () => ({ models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label, desc: m.desc, size: m.size, recommended: !!m.recommended })), defaultModel: DEFAULT_MODEL }));
+  ipcMain.handle('setup:engineStatus', async () => ({ found: await engine.find(store.get()), state: { ...engine.state, log: engine.log.slice(-6000) } }));
+  ipcMain.handle('setup:engineInstall', async () => {
+    try { return { ok: true, found: await engine.install() }; } catch (err) { return { ok: false, error: err.message, code: err.code }; }
+  });
+  ipcMain.handle('setup:engineCancel', () => engine.cancel());
+  ipcMain.handle('setup:modelStatus', (_e, id) => engine.modelStatus(modelOf(id)));
   ipcMain.handle('setup:modelDownload', async (_e, id) => {
-    try { await models.ensure(modelOf(id)); return { ok: true }; } catch (err) { return { ok: false, error: err.message, code: err.code }; }
+    try {
+      const py = await engine.find(store.get());
+      if (!py) return { ok: false, code: 'no-engine', error: 'Instale o motor de transcrição primeiro.' };
+      await engine.ensureModel(modelOf(id), py.cmd);
+      return { ok: true };
+    } catch (err) { return { ok: false, error: err.message, code: err.code }; }
   });
-  ipcMain.handle('setup:modelCancel', (_e, id) => models.cancel(modelOf(id)));
-  ipcMain.handle('setup:modelCleanup', () => ({ freed: models.removeOthers(store.get('localModel')) }));
-  ipcMain.handle('setup:claudeStatus', () => claudeSetup.status(store.get('claudePath')));
-  ipcMain.handle('setup:claudeState', () => ({ ...claudeSetup.state }));
-  ipcMain.handle('setup:claudeInstall', async () => {
-    try { return { ok: true, status: await claudeSetup.install(store.get('claudePath')) }; } catch (err) { return { ok: false, error: err.message }; }
+  ipcMain.handle('setup:modelCancel', (_e, id) => engine.cancelModel(modelOf(id)));
+  // Claude Code e Codex: mesmos canais, com o motor como primeiro argumento
+  const cli = (eng) => aiSetup[eng === 'codex' ? 'codex' : 'claude'];
+  const cliPath = (eng) => store.get(eng === 'codex' ? 'codexPath' : 'claudePath');
+  ipcMain.handle('setup:aiStatus', (_e, eng) => cli(eng).status(cliPath(eng)));
+  ipcMain.handle('setup:aiState', (_e, eng) => ({ engine: cli(eng).engine, ...cli(eng).state, log: cli(eng).log.slice(-6000) }));
+  ipcMain.handle('setup:aiInstall', async (_e, eng) => {
+    try { return { ok: true, status: await cli(eng).install(cliPath(eng)) }; } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('setup:claudeLogin', async () => {
-    try { return { ok: true, auth: await claudeSetup.login(store.get('claudePath')) }; } catch (err) { return { ok: false, error: err.message, cancelled: !!err.cancelled }; }
+  ipcMain.handle('setup:aiLogin', async (_e, eng) => {
+    try { return { ok: true, auth: await cli(eng).login(cliPath(eng)) }; } catch (err) { return { ok: false, error: err.message, cancelled: !!err.cancelled }; }
   });
-  ipcMain.handle('setup:claudeCode', (_e, code) => claudeSetup.sendCode(code));
-  ipcMain.handle('setup:claudeCancel', () => claudeSetup.cancel());
+  ipcMain.handle('setup:aiCode', (_e, eng, code) => cli(eng).sendCode(code));
+  ipcMain.handle('setup:aiCancel', (_e, eng) => cli(eng).cancel());
 
   // Atualização
   ipcMain.handle('update:status', () => updater.status);
@@ -996,25 +1025,14 @@ function setupIpc() {
   ipcMain.handle('detector:apps', () => detector.apps);
 }
 
-// ───────────────────────── Motor local (whisper.cpp) e Claude Code ─────────────────────────
+// ───────────────────────── Motor local (Python + faster-whisper) e Claude Code ─────────────────────────
 function setupLocalEngine() {
-  const ud = app.getPath('userData');
-  const workDir = path.join(ud, 'whisper-work');
-  // Sobras de uma transcrição interrompida (o app fechou no meio)
-  try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
-  models = new ModelManager(path.join(ud, 'models'));
-  configureLocal({ models, workDir });
-  claudeSetup = new ClaudeSetup();
-  models.on('progress', (st) => send('model-progress', st));
-  claudeSetup.on('state', (st) => send('claude-setup', st));
-
-  // Quem vinha da versão com Python: o modelo precisa ser baixado de novo (formato do whisper.cpp).
-  // Quem estava no padrão antigo (Small) passa para o Turbo, o novo padrão; o app avisa uma vez.
-  if (!store.get('whisperCpp')) {
-    const old = store.get('localModel');
-    const localModel = old === 'small' ? 'large-v3-turbo' : old === 'tiny' ? 'base' : modelId(old);
-    store.set({ whisperCpp: true, localModel, whisperNotice: !!store.get('onboarded') && store.get('engine') === 'local' });
-  }
+  engine = new Engine(path.join(app.getPath('userData'), 'engine'), { script: resourcePath('python', 'transcribe.py') });
+  configureLocal({ engine });
+  aiSetup = { claude: new CliSetup('claude'), codex: new CliSetup('codex') };
+  engine.on('state', (st) => send('engine-setup', st));
+  engine.on('model-progress', (st) => send('model-progress', st));
+  for (const s of Object.values(aiSetup)) s.on('state', (st) => send('ai-setup', st));
 }
 
 // ───────────────────────── Protocolo de mídia (com suporte a Range p/ busca no player) ─────────────────────────
@@ -1071,7 +1089,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   // Deixa claro para o outro PC que nada mais está rodando aqui (senão ele espera o sinal de vida expirar)
   try { library?.recoverInterrupted(); library?.close(); } catch {}
-  try { claudeSetup?.cancel(); } catch {}
+  try { aiSetup?.claude.cancel(); aiSetup?.codex.cancel(); engine?.cancel(); } catch {}
 });
 
 app.whenReady().then(async () => {
@@ -1176,6 +1194,7 @@ app.whenReady().then(async () => {
   updater.on('failed', (st) => toast('error', st.error, { duration: 9000 }));
   updater.start();
   store.on('change', (c) => {
+    if (c.pythonPath !== undefined) engine.forget(); // procura o Python de novo
     send('settings', store.get());
     if (c.shortcutToggle !== undefined || c.shortcutMarker !== undefined) { const f = registerShortcuts(); if (!f.length) toast('success', 'Atalhos atualizados.'); }
     if (c.detectMeetings !== undefined) c.detectMeetings ? detector.start() : detector.stop();

@@ -4,7 +4,7 @@ const os = require('os');
 const { EventEmitter } = require('events');
 const { ffmpegPath, run, probeAudio } = require('./tools');
 const { transcribe, UserError } = require('./transcribe');
-const { modelInfo } = require('./whisper');
+const { MODELS } = require('./engine');
 const { buildTranscript, transcriptToText, fmtTime } = require('./speakers');
 const { readSkill } = require('./claude');
 const { runAI, engineName } = require('./ai');
@@ -284,7 +284,7 @@ class Pipeline extends EventEmitter {
     const total = weights.reduce((a, b) => a + b, 0);
     const raw = {};
     let done = 0;
-    const engineLabel = settings.engine === 'local' ? `Whisper local (${modelInfo(settings.localModel).label})` : settings.engine === 'groq' ? 'Groq Whisper' : 'OpenAI Whisper';
+    const engineLabel = settings.engine === 'local' ? `Whisper local (${MODELS[settings.localModel]?.label || settings.localModel})` : 'OpenAI Whisper';
     for (let i = 0; i < jobs.length; i++) {
       const t = jobs[i];
       const label = t === 'mic' ? 'sua voz' : t === 'system' ? 'participantes' : 'áudio';
