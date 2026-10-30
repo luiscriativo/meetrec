@@ -41,6 +41,7 @@ function draw() {
     ${name ? contextHtml() : ''}
     ${glossaryHtml()}
     ${name ? historyHtml() : ''}
+    ${name ? archiveHtml() : ''}
   </div>`;
   bind();
 }
@@ -67,51 +68,40 @@ function headHtml() {
 // ───────── Tamanho da memória (o que vai para cada resumo) ─────────
 const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace('.', ',')} mil` : String(n));
 
+// Só informa: a memória se mantém pequena sozinha (o app enxuga quando passa do ponto e guarda
+// o que saiu no arquivo). Nada aqui pede ação — "Enxugar agora" e "Desfazer" são opcionais.
 function sizeHtml() {
   const s = data.size;
   if (!s || (!s.historyChars && !s.contextChars)) return '';
-  const pct = Math.min(100, Math.round((s.historyChars / s.historyMax) * 100));
-  const label = s.level === 'big' ? 'Memória grande — vale enxugar' : s.level === 'warn' ? 'Memória crescendo' : 'Memória em bom tamanho';
-  const why = [
-    s.historyChars >= s.historyMax ? 'o histórico chegou ao limite e está sendo cortado' : '',
-    s.stale ? `${s.stale} ${s.stale === 1 ? 'pendência antiga' : 'pendências antigas'} (sem menção nas últimas reuniões)` : '',
-    s.contextChars > 2500 ? 'o contexto está longo' : '',
-  ].filter(Boolean).join(' · ');
+  const pct = Math.min(100, Math.round((s.historyChars / s.slimAt) * 100));
   const working = busy === 'slim';
-  return `<div class="card mem-card ${s.level}">
-    <div class="row" style="gap:12px;align-items:center">
-      <span class="mem-ico">${ic(s.level === 'ok' ? 'checkCircle' : 'alert', 16)}</span>
-      <div class="grow">
-        <b>${label}</b>
-        <div class="muted" style="font-size:12.5px;margin-top:2px">Vai para cada resumo: contexto ${k(s.contextChars)} · histórico ${k(s.historyChars)} de ${k(s.historyMax)} caracteres · do glossário (${s.glossary} ${s.glossary === 1 ? 'termo' : 'termos'}) só os que aparecem na reunião${why ? ` — ${esc(why)}` : ''}.</div>
-        <div class="mem-bar"><i style="width:${pct}%"></i></div>
-      </div>
-      ${data.history && !data.slim ? `<button class="btn ${s.level === 'ok' ? 'ghost' : 'primary'} sm" id="slimBtn" ${busy ? 'disabled' : ''} title="O ${aiName()} junta itens repetidos, tira o que foi resolvido e propõe uma versão curta — você aprova antes de valer">${ic(working ? 'loader' : 'wand', 13, working ? 'spin' : '')} ${working ? esc(busyMsg || 'Enxugando…') : 'Enxugar com o ${aiName()}'}</button>` : ''}
+  return `<div class="mem-line">
+    <span class="mem-ico">${ic('brain', 15)}</span>
+    <div class="grow">
+      <div class="mem-t"><b>Memória da pasta</b><span class="muted">contexto ${k(s.contextChars)} · histórico ${k(s.historyChars)} caracteres${s.archived ? ` · ${s.archived} ${s.archived === 1 ? 'item' : 'itens'} no arquivo` : ''}</span></div>
+      <div class="mem-bar" title="Ao passar de ${k(s.slimAt)} caracteres, o app enxuga sozinho"><i style="width:${pct}%"></i></div>
     </div>
+    ${data.backup ? `<button class="btn ghost sm" id="undoSlim" title="Volta a memória para como estava antes da última limpeza (${data.backup.at ? fmtDate(data.backup.at) : ''})">${ic('refresh', 13)} Desfazer limpeza</button>` : ''}
+    ${data.history ? `<button class="btn ghost sm" id="slimBtn" ${busy ? 'disabled' : ''} title="O ${aiName()} junta itens repetidos e tira o que foi resolvido. Acontece sozinho quando a memória cresce.">${ic(working ? 'loader' : 'wand', 13, working ? 'spin' : '')} ${working ? esc(busyMsg || 'Enxugando…') : 'Enxugar agora'}</button>` : ''}
   </div>`;
 }
 
-function slimHtml() {
-  const p = data.slim;
-  if (!p) return '';
-  const before = (data.history || '').length, after = p.history.length;
-  return `<div class="card draft-card">
-    <div class="row" style="align-items:flex-start;gap:12px">
-      <span class="draft-ico">${ic('wand', 18)}</span>
-      <div class="grow">
-        <b>Proposta para enxugar a memória da pasta</b>
-        <div class="muted" style="font-size:12.5px;margin-top:2px">Histórico de ${k(before)} para ${k(after)} caracteres${p.context ? ' · contexto também resumido' : ''}. Nada muda até você aprovar.</div>
-      </div>
-    </div>
-    ${p.removed?.length ? `<div class="slim-removed"><div class="cv-l" style="margin-bottom:4px">O que sai</div>${p.removed.map((r) => `<div class="sr">${ic('x', 12)} ${esc(r)}</div>`).join('')}</div>` : ''}
-    <div class="draft-body"><div class="cv-l" style="margin-bottom:6px">Novo histórico</div><div class="doc hist">${histLines(p.history)}</div></div>
-    ${p.context ? `<div class="draft-body"><div class="cv-l" style="margin-bottom:6px">Novo contexto</div>${contextView(p.context, data.context)}</div>` : ''}
-    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">
-      <button class="btn ghost" id="discardSlim">${ic('x', 14)} Descartar</button>
-      <button class="btn primary" id="approveSlim">${ic('check', 14)} Aprovar</button>
-    </div>
-  </div>`;
+// O que saiu da memória ativa (resolvido, substituído ou antigo): não vai para o resumo, mas fica aqui
+function archiveHtml() {
+  const a = data.archive || [];
+  if (!a.length) return '';
+  const items = a.map((x, i) => ({ ...x, i })).reverse();
+  return `<details class="archive">
+    <summary>${ic('history', 14)} Arquivo da pasta <span class="count">${a.length}</span><span class="muted">— o que saiu do histórico; não vai para os resumos</span></summary>
+    <div class="arch-list">${items.map((x) => `<div class="arch-row">
+      <span class="grow">${esc(x.text)}</span>
+      <span class="muted arch-why">${esc(x.why || '')}${x.at ? ` · ${fmtDate(x.at, false)}` : ''}</span>
+      <button class="btn ghost sm" data-restore="${x.i}" title="Volta para o histórico ativo">Restaurar</button>
+    </div>`).join('')}</div>
+  </details>`;
 }
+
+function slimHtml() { return ''; }
 
 // Histórico com as pendências "(antiga)" destacadas
 // Com `actions`, cada pendência antiga ganha os botões "Encerrar" e "Ainda vale"
@@ -192,7 +182,7 @@ function contextHtml() {
   }
   return title + `<div class="card card-pad">
     <div class="row" style="margin-bottom:10px"><span class="chip ok">${ic('check', 11)} Aprovado</span>${data.contextAt ? `<span class="muted" style="font-size:12px">${fmtDate(data.contextAt)}</span>` : ''}<div class="grow"></div>
-      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao ${aiName()} para revisar o contexto com base em todos os resumos da pasta">${ic(busy === 'boot' ? 'loader' : 'refresh', 13, busy === 'boot' ? 'spin' : '')} ${busy === 'boot' ? esc(busyMsg || 'Revisando…') : 'Revisar com o ${aiName()}'}</button>` : ''}
+      ${data.summarized && !data.draft ? `<button class="btn ghost sm" id="bootBtn" ${busy ? 'disabled' : ''} title="Pede ao ${aiName()} para revisar o contexto com base em todos os resumos da pasta">${ic(busy === 'boot' ? 'loader' : 'refresh', 13, busy === 'boot' ? 'spin' : '')} ${busy === 'boot' ? esc(busyMsg || 'Revisando…') : `Revisar com o ${aiName()}`}</button>` : ''}
       <button class="btn sm" id="editCtx">${ic('edit', 13)} Editar</button></div>
     ${contextView(c)}
   </div>`;
@@ -276,7 +266,6 @@ async function slim() {
   if (!r.ok) toast('error', r.error);
   else toast('success', r.message);
   await refresh();
-  if (r.ok) $('.draft-card')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 function bind() {
@@ -324,6 +313,18 @@ function bind() {
   on('#slimBtn', slim);
   $$('[data-stale-close]').forEach((b) => (b.onclick = () => editStale(+b.dataset.staleClose, false)));
   $$('[data-stale-keep]').forEach((b) => (b.onclick = () => editStale(+b.dataset.staleKeep, true)));
+  on('#undoSlim', async () => {
+    const r = await api.folders.undoSlim(name);
+    if (!r.ok) return toast('error', r.error);
+    toast('success', 'Memória voltou a ser como era antes da limpeza.');
+    ctx.reloadFolders(); refresh();
+  });
+  $$('[data-restore]').forEach((b) => (b.onclick = async () => {
+    const r = await api.folders.restoreArchived(name, +b.dataset.restore);
+    if (!r.ok) return toast('error', r.error);
+    toast('success', 'Item devolvido ao histórico.');
+    refresh();
+  }));
   on('#approveSlim', async () => {
     const r = await api.folders.approveSlim(name);
     if (!r.ok) return toast('error', r.error);

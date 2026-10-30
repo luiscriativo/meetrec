@@ -30,9 +30,10 @@ const FALLBACK_FORMAT = `Formato de saída: texto limpo, pronto para colar no Te
 ☐ Responsável: ação concreta, com prazo se mencionado.`;
 
 // Pedido do bloco estruturado no fim do resumo (dúvidas, contexto e histórico da pasta)
-function blockRules(folder) {
+function blockRules(folder, choices = []) {
   const inFolder = !!folder.name;
   const hasCtx = inFolder && !F.contextIsEmpty(folder.data.context);
+  const ask = !inFolder && choices.length;
   return `=== BLOCO FINAL OBRIGATÓRIO (o app lê e esconde do texto) ===
 Depois do resumo, termine a resposta com um bloco exatamente neste formato (JSON válido, sem comentários):
 \`\`\`meetrec
@@ -40,10 +41,14 @@ Depois do resumo, termine a resposta com um bloco exatamente neste formato (JSON
   "duvidas": [
     {"tipo": "termo|nome|numero|falante|trecho", "tempo": "mm:ss", "ouvido": "texto exatamente como aparece na transcrição", "sugestao": "o que você acha que é (ou vazio)", "pergunta": "pergunta curta e direta ao usuário"}
   ]${inFolder ? `,
-  "contexto": ${hasCtx ? 'null ou o contexto COMPLETO atualizado, só se esta reunião trouxe informação nova e relevante (pessoa nova, papel, objetivo)' : 'o contexto da pasta deduzido desta reunião'} no formato {"resumo": "do que se trata o projeto/assunto em 1-2 frases", "participantes": [{"nome": "", "papel": "cargo ou função, se der para saber"}], "objetivos": [""], "observacoes": ""},
-  "historico": "o HISTÓRICO DA PASTA atualizado com esta reunião (regras abaixo)"` : ''}
+  "contexto": ${hasCtx ? 'null, ou o contexto COMPLETO atualizado só se esta reunião mudou algo importante (pessoa recorrente nova, papel, objetivo)' : 'o contexto da pasta deduzido desta reunião'} no formato {"resumo": "do que se trata o projeto/assunto em 1-2 frases", "participantes": [{"nome": "", "papel": "cargo ou função, se der para saber"}], "objetivos": [""], "observacoes": ""} — em "participantes", só as pessoas recorrentes do projeto (no máximo ${F.PEOPLE_MAX}), não todo mundo que já apareceu,
+  "historico": "o HISTÓRICO DA PASTA atualizado com esta reunião (regras abaixo)",
+  "arquivar": ["linhas que você TIROU do histórico por estarem resolvidas, substituídas ou sem menção nas últimas 3 reuniões"]` : ''}${ask ? `,
+  "pasta": "o nome EXATO de uma das pastas abaixo, se esta reunião claramente pertence a ela; senão null"` : ''}
 }
-\`\`\`
+\`\`\`${ask ? `
+Pastas existentes (para o campo "pasta" — na dúvida, use null):
+${choices.map((c) => `- ${c.name}${c.about ? ` — ${c.about}` : ''}`).join('\n')}` : ''}
 Regras das dúvidas:
 - Liste tudo de que você NÃO teve certeza por causa da transcrição: palavras/nomes/siglas que parecem mal reconhecidos, números ou datas ambíguos, falas sem sentido, quem disse algo importante quando não está claro. No máximo 10, as mais importantes primeiro.
 - "ouvido" deve ser copiado literalmente da transcrição (o app usa para localizar e corrigir). Deixe vazio em dúvidas de número/trecho/falante sem palavra específica.
@@ -54,10 +59,10 @@ Regras das dúvidas:
 
 // Regras do histórico (usadas no resumo, na montagem e no "Enxugar")
 const HISTORY_RULES = `Regras do histórico:
-- Bullets com •: decisões em vigor e pendências em aberto (com responsável). No máximo 25 linhas e ${F.HISTORY_MAX} caracteres — seja telegráfico.
+- Bullets com •: só decisões em vigor e pendências em aberto (com responsável). No máximo 15 linhas e ${F.HISTORY_TARGET} caracteres — seja telegráfico, uma linha por item.
 - Termine cada pendência com a data da última reunião em que ela foi mencionada, assim: (últ. menção dd/mm).
-- Remova pendências que foram resolvidas e decisões que foram substituídas.
-- Pendências sem menção nas últimas 3 reuniões da pasta: acrescente "(antiga)" no fim da linha, para o usuário decidir se ainda valem.`;
+- Tire do histórico (e liste em "arquivar"): pendências resolvidas, decisões substituídas e pendências sem menção nas últimas 3 reuniões da pasta. Nada se perde: o app guarda no arquivo da pasta.
+- Junte itens repetidos ou parecidos numa linha só.`;
 
 const SILENT_DB = -55;
 
@@ -129,7 +134,7 @@ class Pipeline extends EventEmitter {
   resume() { this._next(); }
 
   isBusy(id) { return this.current?.id === id || this.queue.some((j) => j.id === id); }
-  status() { return { current: this.current, queued: this.queue.map((j) => j.id) }; }
+  status() { return { current: this.current?.id ? this.current : null, queued: this.queue.map((j) => j.id).filter(Boolean) }; }
 
   enqueue(id, from = 'audio') {
     if (this.isBusy(id) || !this.library.get(id)) return false;
@@ -166,6 +171,13 @@ class Pipeline extends EventEmitter {
     if (this.isRecording()) return; // não compete com uma gravação em andamento
     this.current = this.queue.shift();
     this.cancelled = false;
+    if (this.current.slim) {
+      const name = this.current.slim;
+      try { await this.slimFolder(name, null, { auto: true }); } catch (e) { this.emit('slim-failed', { name, error: e.message }); }
+      this.current = null;
+      this.child = null;
+      return this._next();
+    }
     const { id, from } = this.current;
     this.emit('start', { id });
     try {
@@ -379,7 +391,7 @@ class Pipeline extends EventEmitter {
     const out = [];
     if (name) {
       const ctx = [data.description && `Descrição: ${data.description}`, F.contextToText(data.context)].filter(Boolean).join('\n');
-      out.push(`=== CONTEXTO DA PASTA "${name}" (confirmado pelo usuário) ===\n${ctx || '(ainda sem contexto — esta é uma das primeiras reuniões da pasta)'}`);
+      out.push(`=== CONTEXTO DA PASTA "${name}" (confirmado pelo usuário) ===\n${ctx || '(ainda sem contexto — esta é uma das primeiras reuniões da pasta)'}${data.context?.participants?.length ? '\n(Os participantes acima são as pessoas que costumam aparecer na pasta — servem para grafar nomes e entender papéis. NÃO quer dizer que estiveram nesta reunião.)' : ''}`);
       // Mesmo que o histórico tenha sido editado à mão e ficado enorme, o prompt recebe no máximo HISTORY_MAX
       if (data.history) out.push(`=== HISTÓRICO DA PASTA (reuniões anteriores) ===\n${F.capHistory(data.history).text}`);
     }
@@ -391,8 +403,53 @@ class Pipeline extends EventEmitter {
     return { name, data, text: out.join('\n\n') };
   }
 
+  // Pastas como o classificador e o prompt enxergam: contexto + títulos e pessoas das últimas reuniões
+  folderCandidates(exceptId) {
+    const all = this.library.list();
+    return this.library.listFolders().map(({ name }) => {
+      const d = this.library.getFolder(name);
+      const ms = all.filter((m) => m.folder === name && m.id !== exceptId).slice(0, 15);
+      return {
+        name,
+        description: d?.description || '',
+        context: d?.context,
+        glossary: d?.glossary || [],
+        titles: ms.flatMap((m) => [m.meetingTitle, m.titleAuto ? null : m.title]).filter(Boolean),
+        people: [...new Set(ms.flatMap((m) => m.participants || []))],
+      };
+    });
+  }
+
+  folderChoices() {
+    return this.folderCandidates().map((f) => ({ name: f.name, about: (f.description || f.context?.about || '').replace(/\s+/g, ' ').slice(0, 140) }));
+  }
+
+  // Antes do resumo: reunião sem pasta (e que você não colocou de propósito em "Sem pasta") vai
+  // sozinha para a pasta quando os sinais são claros; quando não são, fica uma sugestão para você.
+  async _autoFolder(id) {
+    const meta = this.library.get(id);
+    if (!meta || meta.folder || meta.folderPick === 'user' || meta.folderPick === 'auto') return null;
+    const candidates = this.folderCandidates(id);
+    if (!candidates.length) return null;
+    const tr = this.library.readJson(id, 'transcript.json');
+    const text = tr ? tr.segments.map((s) => s.text).join(' ') : '';
+    const r = F.scoreFolders({ title: meta.meetingTitle || (meta.titleAuto ? '' : meta.title), participants: meta.participants, text, owner: this.store.get().userName }, candidates);
+    if (r.decision === 'auto') {
+      try {
+        await this.library.move(id, r.best.name);
+        this.library.update(id, { folderPick: 'auto', folderAuto: { name: r.best.name, reasons: r.best.reasons, at: new Date().toISOString() }, folderSuggestion: null });
+        this.emit('folder-auto', { id, name: r.best.name, reasons: r.best.reasons });
+        return r.best.name;
+      } catch { /* arquivo em uso (ex.: o player): vira só uma sugestão */ }
+    }
+    if (r.best) this.library.update(id, { folderSuggestion: { name: r.best.name, reasons: r.best.reasons, by: 'app' } });
+    return null;
+  }
+
   // 4) Gera o resumo com o Claude Code
   async _summary(id) {
+    this._step(id, 'summary', { message: 'Identificando a pasta da reunião…' });
+    await this._autoFolder(id);
     const { meta, settings, header, text, folder } = this.buildContext(id);
     const skill = settings.useSkill ? readSkill() : null;
     const owner = settings.userName || 'Você';
@@ -408,9 +465,10 @@ ${skill || FALLBACK_FORMAT}
 - Não use ferramentas, não leia nem salve arquivos: responda SOMENTE com o texto final do resumo, começando pela linha "📋", seguido do bloco final descrito abaixo.
 - A transcrição já está abaixo, com horários [mm:ss] e quem falou.
 ${speakerRule}
+- Na linha "👥 Participantes", liste SOMENTE quem falou ou foi identificado nesta reunião (falas da transcrição e "Participantes identificados"). Nunca copie a lista de participantes do contexto da pasta. Se não der para saber os nomes, escreva só os que aparecem.
 - Dê atenção especial aos momentos marcados e às anotações do usuário, quando houver.
 ${folder.text ? '- Use o contexto, o histórico, o glossário e os esclarecimentos abaixo para entender a reunião, corrigir erros de reconhecimento de voz e escrever nomes e termos com a grafia certa. Se fizer sentido, ligue o que foi dito a pendências do histórico.\n' : ''}${settings.customInstructions ? `- Instruções adicionais do usuário: ${settings.customInstructions}\n` : ''}
-${blockRules(folder)}
+${blockRules(folder, folder.name || meta.folderPick === 'user' ? [] : this.folderChoices())}
 
 ${folder.text ? `${folder.text}\n\n` : ''}=== DADOS DA REUNIÃO ===
 ${header}
@@ -446,6 +504,9 @@ ${text}
     const doubts = F.normalizeDoubts(parsed.data?.duvidas);
     const patch = { summary: { generatedAt: new Date().toISOString(), engine: res.engine, model: res.model, costUsd: res.costUsd, durationMs: res.durationMs, blockError: parsed.error || (parsed.data ? null : 'sem bloco') }, actions, doubts };
     if (title && this.library.get(id).titleAuto) patch.title = title;
+    // Sem pasta: a IA também diz se reconheceu uma das pastas (fica como sugestão — você decide)
+    const aiPick = !folder.name && meta.folderPick !== 'user' && typeof parsed.data?.pasta === 'string' ? this.library.listFolders().find((f) => f.name.toLowerCase() === parsed.data.pasta.trim().toLowerCase()) : null;
+    if (aiPick && !this.library.get(id).folder) patch.folderSuggestion = { name: aiPick.name, reasons: [`o ${engineName(settings)} reconheceu o assunto`], by: 'ai' };
     const m = this.library.update(id, patch);
     const folderNote = folder.name ? this._applyFolderBlock(folder.name, parsed.data, m) : '';
     const secs = res.durationMs ? ` em ${Math.round(res.durationMs / 1000)}s` : '';
@@ -465,7 +526,10 @@ ${text}
         const capped = F.capHistory(data.historico);
         d.history = capped.text;
         d.historyAt = new Date().toISOString();
-        notes.push(capped.cut ? 'histórico atualizado (cortado por tamanho — vale enxugar)' : 'histórico da pasta atualizado');
+        // O que saiu do histórico vai para o arquivo da pasta (não volta para o resumo, mas não se perde)
+        const out = Array.isArray(data.arquivar) ? data.arquivar.map(String) : [];
+        d.archive = F.addToArchive(F.addToArchive(d.archive, out, `encerrado em “${meta.title}”`), capped.dropped, 'cortado por tamanho');
+        notes.push('histórico da pasta atualizado');
       }
       if (data.contexto && typeof data.contexto === 'object') {
         const c = F.normalizeContext(data.contexto);
@@ -477,7 +541,16 @@ ${text}
       return d;
     });
     if (notes.some((n) => n.includes('contexto'))) this.emit('folder-draft', { name, id: meta.id, kind: this.library.getFolder(name).draft?.kind });
+    if (F.needsSlim(this.library.getFolder(name))) this.scheduleSlim(name);
     return notes.join(' · ');
+  }
+
+  // A limpeza automática entra na fila como um trabalho leve, depois da reunião atual
+  scheduleSlim(name) {
+    if (!name || this.queue.some((j) => j.slim === name) || this.current?.slim === name) return false;
+    this.queue.push({ slim: name });
+    this._next();
+    return true;
   }
 
   // Monta contexto + histórico de uma pasta a partir dos resumos que ela já tem
@@ -509,11 +582,13 @@ ${docs}`;
     return { message: note || 'Nada novo para acrescentar.' };
   }
 
-  // "Enxugar com o Claude": propõe um histórico (e contexto) mais curto, que você aprova antes de valer
-  async slimFolder(name, onStatus) {
+  // Enxuga a memória da pasta (histórico e, se preciso, contexto) e já aplica: a versão anterior fica
+  // guardada para "Desfazer" e o que saiu vai para o arquivo da pasta. Roda sozinho quando a memória cresce.
+  async slimFolder(name, onStatus, { auto = false } = {}) {
     const folder = this.library.getFolder(name);
     if (!name || !folder) throw new UserError('Pasta não encontrada.');
     if (!folder.history && F.contextIsEmpty(folder.context)) throw new UserError('Esta pasta ainda não tem histórico nem contexto para enxugar.');
+    if (auto && !F.needsSlim(folder)) return { message: 'A memória já está pequena.' };
     const settings = this.store.get();
     const recent = this.library.list().filter((m) => m.folder === name && this.library.readText(m.id, 'summary.md')).slice(0, 3).reverse();
     const docs = recent.map((m) => `--- ${m.title} (${new Date(m.createdAt).toLocaleDateString('pt-BR')}) ---\n${(this.library.readText(m.id, 'summary.md') || '').slice(0, 2500)}`).join('\n\n');
@@ -524,9 +599,10 @@ Não use ferramentas. Responda SOMENTE com um bloco neste formato (JSON válido)
 \`\`\`
 Como enxugar:
 - Junte itens repetidos, remova decisões substituídas e pendências que as reuniões recentes mostram resolvidas.
-- Pendências marcadas "(antiga)": remova as que claramente perderam o sentido; mantenha (com "(antiga)") as que ainda podem valer.
-- Mire em menos de ${Math.round(F.HISTORY_MAX * 0.6)} caracteres no histórico. Não invente nada.
-- Só devolva "contexto" se ele estiver longo ou com informação desatualizada; senão use null.
+- Pendências marcadas "(antiga)" ou sem menção nas últimas 3 reuniões: tire do histórico (o app guarda no arquivo).
+- Mire em menos de ${F.HISTORY_TARGET} caracteres e 15 linhas no histórico. Não invente nada.
+- Só devolva "contexto" se ele estiver longo ou com informação desatualizada; senão use null. Em "participantes", só as pessoas recorrentes (no máximo ${F.PEOPLE_MAX}).
+- Em "removido", liste cada linha que saiu do histórico (texto curto), para ir ao arquivo da pasta.
 ${HISTORY_RULES}
 
 === PASTA "${name}" ===
@@ -540,20 +616,28 @@ ${folder.history || '(vazio)'}
 === RESUMOS DAS REUNIÕES MAIS RECENTES ===
 ${docs || '(nenhum)'}`;
     onStatus?.(`O ${engineName(settings)} está enxugando a memória da pasta…`);
-    const res = await runAI({ prompt, settings, cwd: this.library.folderDir(name), onStatus });
+    const res = await runAI({ prompt, settings, cwd: this.library.folderDir(name), onStatus, onChild: (c) => this._setChild(c) });
     const parsed = F.splitSummary(res.text.includes('```meetrec') ? res.text : '```meetrec\n' + res.text);
     const h = parsed.data?.historico;
     if (typeof h !== 'string') throw new UserError(`O ${engineName(settings)} não devolveu o histórico no formato esperado. Tente de novo.`);
     const ctx = parsed.data.contexto && typeof parsed.data.contexto === 'object' ? F.normalizeContext(parsed.data.contexto) : null;
-    const slim = {
-      history: F.capHistory(h).text,
-      context: ctx && !F.contextIsEmpty(ctx) ? ctx : null,
-      removed: (Array.isArray(parsed.data.removido) ? parsed.data.removido : []).map(String).filter(Boolean).slice(0, 15),
-      at: new Date().toISOString(),
-    };
-    this.library.updateFolder(name, { slim });
-    const before = F.folderSize(folder).historyChars, after = slim.history.length;
-    return { message: `Proposta pronta: histórico de ${before} para ${after} caracteres. Confira e aprove.` };
+    const capped = F.capHistory(h, F.HISTORY_TARGET + 300);
+    const removed = (Array.isArray(parsed.data.removido) ? parsed.data.removido : []).map(String).filter(Boolean);
+    // Um resumo novo pode ter atualizado a pasta enquanto a IA trabalhava: nesse caso, não sobrescreve
+    const now = this.library.getFolder(name);
+    if (!now || now.historyAt !== folder.historyAt) return { message: 'A pasta mudou durante a limpeza — fica para a próxima.' };
+    const before = F.folderSize(now);
+    this.library.updateFolder(name, (d) => {
+      d.backup = { history: d.history, context: d.context, at: new Date().toISOString() };
+      d.history = capped.text;
+      if (ctx && !F.contextIsEmpty(ctx)) d.context = ctx;
+      d.archive = F.addToArchive(F.addToArchive(d.archive, removed, 'limpeza automática'), capped.dropped, 'cortado por tamanho');
+      d.slim = null;
+      return d;
+    });
+    const after = F.folderSize(this.library.getFolder(name));
+    this.emit('folder-slimmed', { name, auto, before: before.historyChars + before.contextChars, after: after.historyChars + after.contextChars });
+    return { message: `Memória enxugada: de ${before.historyChars + before.contextChars} para ${after.historyChars + after.contextChars} caracteres. Dá para desfazer na tela da pasta.` };
   }
 
   // Pergunta livre ao Claude sobre a reunião

@@ -313,8 +313,11 @@ async function startRecording(opts = {}) {
   const s = store.get();
   const st = bridge.status();
   const platform = opts.platform || (st.inCall ? st.platform : null) || (detector.apps.find((a) => !/Chrome|Edge|Firefox|Brave|Opera|Vivaldi|Arc/.test(a)) || null);
-  const meta = library.create({ folder: targetFolder(opts.folder), platform, meetingTitle: opts.title || (st.inCall ? st.meetingTitle : null), participants: st.inCall ? st.participants : [] });
+  const target = targetFolder(opts.folder);
+  const meta = library.create({ folder: target.folder, folderPick: target.pick, platform, meetingTitle: opts.title || (st.inCall ? st.meetingTitle : null), participants: st.inCall && rosterTrusted() ? st.participants : [] });
   if (opts.title || (st.inCall && st.meetingTitle)) library.update(meta.id, { title: opts.title || st.meetingTitle });
+  // A pasta escolhida em "Salvar em" vale para esta gravação; a próxima volta para o automático
+  if (opts.folder == null && store.get('recordFolder')) store.set({ recordFolder: '' });
 
   rec.streams = {};
   // Com a biblioteca no Drive, grava numa pasta local e só manda o áudio pronto no fim (ver finishRecording)
@@ -354,7 +357,7 @@ async function startRecording(opts = {}) {
   rec.startedAt = Date.now();
   rec.phase = 'recording';
   rec.tracks = started.tracks;
-  if (pipeline.current) {
+  if (pipeline.current?.id) {
     pipeline.setLowPriority(true);
     toast('info', 'A transcrição da reunião anterior continua em prioridade mínima para não pesar na chamada.');
   }
@@ -476,10 +479,13 @@ function registerShortcuts() {
   return fails;
 }
 
-// Pasta onde a próxima gravação/importação é salva (a escolhida em "Salvar em")
+// Pasta onde a próxima gravação/importação é salva (a escolhida em "Salvar em").
+// '' = automático (o app identifica a pasta pelo conteúdo) · NO_FOLDER = "Sem pasta" de propósito.
+const NO_FOLDER = ':none';
 function targetFolder(explicit) {
   const f = explicit !== undefined && explicit !== null ? explicit : store.get('recordFolder');
-  return f && library.getFolder(f) ? f : '';
+  if (f === NO_FOLDER) return { folder: '', pick: 'user' };
+  return f && library.getFolder(f) ? { folder: f, pick: 'user' } : { folder: '', pick: null };
 }
 
 // ───────────────────────── Pastas e pontos de dúvida ─────────────────────────
@@ -504,22 +510,33 @@ function busyElsewhere(id, what) {
   return `Esta reunião está ${doing} no ${o.name}. Aguarde terminar para ${what}.`;
 }
 
-async function moveMeeting(id, folder) {
+async function moveMeeting(id, folder, { quiet = false } = {}) {
   if (rec.id === id) throw new Error('Pare a gravação antes de mover esta reunião.');
   const other = busyElsewhere(id, 'movê-la');
   if (other) throw new Error(other);
   if (pipeline.isBusy(id)) throw new Error('Aguarde o processamento desta reunião terminar para movê-la.');
   const before = library.get(id)?.folder || '';
   const m = await library.move(id, folder);
+  // Você decidiu: o app não tenta mais adivinhar a pasta desta reunião
+  library.update(id, { folderPick: 'user', folderSuggestion: null, folderAuto: null });
   const dest = folder ? `"${folder}"` : '"Sem pasta"';
   const d = folder ? library.getFolder(folder) : null;
   const offerBootstrap = folder && F.contextIsEmpty(d?.context) && !d?.draft && hasSummary(m);
-  if (before !== (folder || '')) {
+  if (before !== (folder || '') && !quiet) {
     toast('success', `Reunião movida para ${dest}.`, offerBootstrap
       ? { duration: 9000, action: { label: 'Montar contexto da pasta', route: { view: 'folder', name: folder, bootstrap: true } } }
       : {});
   }
   return m;
+}
+
+// "É desta pasta": move e refaz o resumo com o contexto da pasta (o que também atualiza a memória dela)
+async function acceptFolderSuggestion(id, name) {
+  await moveMeeting(id, name, { quiet: true });
+  if (hasSummary(library.get(id)) && !pipeline.isBusy(id)) {
+    pipeline.enqueue(id, 'summary');
+    toast('success', `Reunião movida para "${name}". Refazendo o resumo com a memória da pasta…`);
+  } else toast('success', `Reunião movida para "${name}".`);
 }
 
 // Aplica a sua resposta a um ponto de dúvida: corrige a transcrição, guarda o esclarecimento
@@ -581,7 +598,8 @@ async function importAudio(filePath, folder) {
     filePath = r.filePaths[0];
   }
   const name = path.basename(filePath, path.extname(filePath));
-  const meta = library.create({ folder: targetFolder(folder), source: 'import', status: 'processing', title: name, titleAuto: true, originalFile: 'original' + path.extname(filePath).toLowerCase() });
+  const target = targetFolder(folder);
+  const meta = library.create({ folder: target.folder, folderPick: target.pick, source: 'import', status: 'processing', title: name, titleAuto: true, originalFile: 'original' + path.extname(filePath).toLowerCase() });
   // Na nuvem, o original fica só na pasta de trabalho local: ao Drive vai apenas o áudio convertido
   try { fs.mkdirSync(library.workDir(meta.id), { recursive: true }); fs.copyFileSync(filePath, library.workFile(meta.id, meta.originalFile)); } catch (e) {
     library.update(meta.id, { status: 'error', error: `Falha ao copiar: ${e.message}` });
@@ -637,6 +655,11 @@ function onMeetingAppsChange({ apps, started, stopped }) {
   }
 }
 
+const rosterTrusted = () => {
+  const v = String(bridge.status().extVersion || '').split('.').map(Number);
+  return v.length === 3 && !v.some(isNaN) && (v[0] > 1 || (v[0] === 1 && v[1] >= 3));
+};
+
 function onBridgeEvents({ tab, events }) {
   if (!rec.active || rec.paused) return;
   const rt = recTime();
@@ -650,7 +673,8 @@ function onBridgeEvents({ tab, events }) {
   let grew = false;
   for (const e of events) {
     const add = (n) => { if (n && !names.has(n)) { names.add(n); grew = true; } };
-    if (e.type === 'participants') (e.names || []).forEach(add);
+    // Extensões anteriores à 1.3 mandam a lista acumulada de todas as chamadas do dia: só vale quem falou
+    if (e.type === 'participants' && rosterTrusted()) (e.names || []).forEach(add);
     if (e.speaker) add(e.speaker);
   }
   if (grew) patch.participants = [...names];
@@ -844,6 +868,22 @@ function setupIpc() {
     return {};
   }));
   ipcMain.handle('folder:discardSlim', wrap((_e, name) => { library.updateFolder(name, { slim: null }); return {}; }));
+  ipcMain.handle('folder:undoSlim', wrap((_e, name) => {
+    const f = library.getFolder(name);
+    if (!f?.backup) throw new Error('Não há limpeza para desfazer.');
+    library.updateFolder(name, (d) => ({ ...d, history: f.backup.history, context: f.backup.context || d.context, backup: null }));
+    return {};
+  }));
+  // Devolve um item do arquivo para o histórico ativo
+  ipcMain.handle('folder:restoreArchived', wrap((_e, name, index) => {
+    const f = library.getFolder(name);
+    const item = f?.archive?.[index];
+    if (!item) throw new Error('Item não encontrado no arquivo.');
+    library.updateFolder(name, (d) => ({ ...d, history: [d.history, `• ${item.text}`].filter(Boolean).join('\n'), archive: d.archive.filter((_, i) => i !== index) }));
+    return {};
+  }));
+  ipcMain.handle('lib:acceptFolder', wrap(async (_e, id, name) => { await acceptFolderSuggestion(id, name); return {}; }));
+  ipcMain.handle('lib:dismissFolder', wrap((_e, id) => { library.update(id, { folderSuggestion: null, folderPick: 'user' }); return {}; }));
   ipcMain.handle('folder:open', (_e, name) => {
     const d = library.ctxDir(name);
     fs.mkdirSync(d, { recursive: true });
@@ -1068,7 +1108,7 @@ async function quitApp() {
     });
     if (r.response !== 0) return;
     await stopRecording();
-  } else if (pipeline.current) {
+  } else if (pipeline.current?.id) {
     const r = await dialog.showMessageBox({
       type: 'question', buttons: ['Sair mesmo assim', 'Cancelar'], defaultId: 1, cancelId: 1,
       title: 'Processamento em andamento', message: 'Uma reunião ainda está sendo transcrita/resumida.', detail: 'Se sair agora, você poderá processá-la novamente depois.',
@@ -1147,12 +1187,21 @@ app.whenReady().then(async () => {
     toast('info', kind === 'new' ? `Montei o contexto da pasta "${name}" a partir da reunião. Confere?` : `O ${ENGINES[engineOf(store.get())].name} sugeriu atualizar o contexto da pasta "${name}".`,
       { duration: 12000, action: { label: 'Conferir', route: { view: 'folder', name } } });
   });
+  pipeline.on('folder-auto', ({ id, name, reasons }) => {
+    toast('info', `Reunião colocada na pasta "${name}" (${reasons.slice(0, 2).join(', ')}). O resumo vai usar a memória dela.`,
+      { duration: 12000, action: { label: 'Não é desta pasta', route: { view: 'meeting', id, pickFolder: true } } });
+  });
+  pipeline.on('folder-slimmed', ({ name, auto, before, after }) => {
+    if (auto) toast('info', `A memória da pasta "${name}" foi enxugada sozinha (${before} → ${after} caracteres). O que saiu está no arquivo da pasta.`,
+      { duration: 9000, action: { label: 'Ver', route: { view: 'folder', name } } });
+  });
   pipeline.on('progress', (p) => { send('pipeline', p); updateTrayThrottled(); });
   pipeline.on('summary-stream', (p) => send('summary-stream', p));
   pipeline.on('start', ({ id }) => { send('pipeline-start', { id }); updateTray(); });
   pipeline.on('done', ({ id, meta }) => {
     send('pipeline-done', { id });
-    toast('success', `Resumo pronto: ${meta.title}`, { action: { label: 'Abrir', route: { view: 'meeting', id } }, duration: 8000 });
+    const sug = !meta.folder && meta.folderSuggestion?.name;
+    toast('success', sug ? `Resumo pronto: ${meta.title}. Parece ser da pasta "${sug}" — confirme na reunião.` : `Resumo pronto: ${meta.title}`, { action: { label: 'Abrir', route: { view: 'meeting', id } }, duration: sug ? 12000 : 8000 });
     notify('Resumo pronto ✨', meta.title, () => showMain({ view: 'meeting', id }));
     if (overlayWin?.isVisible() && !rec.active) showOverlay('ready', { id, title: meta.title }, 6000);
     updateTray();

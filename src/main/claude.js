@@ -27,7 +27,7 @@ async function claudeInfo(settings) {
 
 function friendlyError(text) {
   const t = (text || '').toLowerCase();
-  if (t.includes('/login') || t.includes('not logged in') || t.includes('invalid api key') || t.includes('authentication'))
+  if (t.includes('/login') || t.includes('not logged in') || t.includes('invalid api key') || t.includes('authentication') || t.includes('failed to authenticate') || t.includes('oauth'))
     return 'O Claude Code não está conectado à sua conta. Vá em Diagnóstico → "Entrar na conta".';
   if (t.includes('rate limit') || t.includes('usage limit') || t.includes('limit reached'))
     return 'Limite de uso do Claude atingido. Tente novamente mais tarde.';

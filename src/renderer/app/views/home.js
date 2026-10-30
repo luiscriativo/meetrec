@@ -10,6 +10,7 @@ let raf = null;
 let markers = [];
 let devices = { mic: null };
 let folder; // undefined = todas · '' = sem pasta · nome da pasta
+const closedGroups = new Set(); // grupos ("Hoje", "Este mês"…) recolhidos nesta sessão
 
 const STEP_LABEL = { audio: 'Preparando áudio', transcribe: 'Transcrevendo', speakers: 'Identificando falantes', summary: 'Gerando resumo' };
 const DRAG_TYPE = 'application/x-meetrec-id';
@@ -18,7 +19,7 @@ const folderLabel = (f) => (f === undefined ? 'Reuniões' : f === '' ? 'Sem past
 
 export function topbar(route = {}) {
   const f = route.folder;
-  return `${f !== undefined ? `<span class="crumb" id="crumbAll">${ic('chevronLeft', 16)} Reuniões</span><span class="muted">/</span>` : ''}<h1 class="h1-clip" title="${esc(folderLabel(f))}">${f ? ic('folder', 16) : ''}<span>${esc(folderLabel(f))}</span></h1>
+  return `${f !== undefined ? `<span class="crumb" id="crumbAll">Reuniões</span><span class="muted">/</span>` : '<span class="crumb">MeetRec</span><span class="muted">/</span>'}<h1 class="h1-clip" title="${esc(folderLabel(f))}"><span>${esc(folderLabel(f))}</span></h1>
     <div class="grow"></div>
     <div class="search no-drag" style="width:280px">${ic('search', 15)}<input class="input" id="q" placeholder="${f ? `Buscar em “${esc(f)}”…` : 'Buscar em títulos, transcrições e resumos…'}" value="${esc(query)}"></div>
     <button class="btn no-drag" id="impBtn" title="Transcrever um arquivo de áudio/vídeo existente${f ? ` (vai para a pasta “${esc(f)}”)` : ''}">${ic('upload', 15)} Importar</button>`;
@@ -27,9 +28,10 @@ export function topbar(route = {}) {
 export function render(el, route = {}) {
   root = el;
   folder = route.folder;
-  // A pasta que você está vendo é onde a próxima gravação será salva
-  if (folder !== undefined && (state.settings.recordFolder || '') !== folder) api.setSettings({ recordFolder: folder });
-  el.innerHTML = `<div class="view-inner"><div id="folderArea"></div><div id="liveArea"></div><div id="listArea"></div></div>`;
+  const today = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).replace(/^./, (c) => c.toUpperCase());
+  el.innerHTML = `<div class="view-inner">
+    <div class="page-head"><div class="grow"><h2>${esc(folderLabel(folder))}</h2><div class="sub">${esc(today)}</div></div></div>
+    <div id="folderArea"></div><div id="liveArea"></div><div id="listArea"></div></div>`;
   $('#q').oninput = debounce(async (e) => {
     query = e.target.value;
     filterIds = query.trim() ? new Set(await api.lib.search(query)) : null;
@@ -60,9 +62,6 @@ function renderFolderHead() {
       <div class="fh-meta">${status}
         <span class="chip">${ic('book', 11)} ${f.glossary} ${f.glossary === 1 ? 'termo' : 'termos'} no glossário</span>
         ${f.hasHistory ? `<span class="chip">${ic('history', 11)} Histórico ativo</span>` : ''}
-        ${f.hasSlim ? `<span class="chip warn">${ic('wand', 11)} Proposta para enxugar — confira</span>`
-          : f.size === 'big' ? `<span class="chip err" title="O histórico chegou ao limite ou tem muitas pendências antigas">${ic('alert', 11)} Memória grande — vale enxugar</span>`
-            : f.size === 'warn' ? `<span class="chip warn">${ic('alert', 11)} Memória crescendo</span>` : ''}
       </div>
     </div>
     <button class="btn ${f.hasDraft ? 'primary' : ''}" id="openCtx">${ic(f.hasDraft ? 'sparkles' : 'brain', 15)} ${f.hasDraft ? 'Conferir contexto' : 'Contexto da pasta'}</button>
@@ -70,11 +69,14 @@ function renderFolderHead() {
   $('#openCtx').onclick = () => ctx.navigate({ view: 'folder', name: folder });
 }
 
+const NO_FOLDER = ':none';
+
 function folderSelectHtml() {
   const cur = state.settings.recordFolder || '';
-  const valid = !cur || state.folders.some((f) => f.name === cur);
-  return `<label class="save-in" title="Pasta onde a gravação será salva — a IA usa o contexto dela no resumo">${ic('folder', 13)} Salvar em
-    <select class="select" id="saveIn"><option value="" ${!cur || !valid ? 'selected' : ''}>Sem pasta</option>${state.folders.map((f) => `<option value="${esc(f.name)}" ${f.name === cur ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="__new">+ Nova pasta…</option></select></label>`;
+  const valid = !cur || cur === NO_FOLDER || state.folders.some((f) => f.name === cur);
+  const v = valid ? cur : '';
+  return `<label class="save-in" title="Automático: o app reconhece a pasta pelo título, pelas pessoas e pelo assunto. Se não tiver certeza, a reunião fica sem pasta e ele pergunta.">${ic('folder', 13)} Pasta
+    <select class="select" id="saveIn"><option value="" ${v === '' ? 'selected' : ''}>Automático</option><option value="${NO_FOLDER}" ${v === NO_FOLDER ? 'selected' : ''}>Sem pasta</option>${state.folders.map((f) => `<option value="${esc(f.name)}" ${f.name === v ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="__new">+ Nova pasta…</option></select></label>`;
 }
 
 function bindFolderSelect() {
@@ -88,7 +90,7 @@ function bindFolderSelect() {
       if (v == null) { s.value = state.settings.recordFolder || ''; return; }
     }
     await api.setSettings({ recordFolder: v });
-    toast('info', v ? `As próximas gravações vão para a pasta “${v}”.` : 'As próximas gravações ficam em “Sem pasta”.');
+    toast('info', !v ? 'O app vai identificar a pasta de cada reunião sozinho.' : v === NO_FOLDER ? 'A próxima gravação fica sem pasta.' : `A próxima gravação vai para a pasta “${v}”. Depois volta para o automático.`);
   };
 }
 
@@ -353,7 +355,7 @@ function renderList() {
   if (filterIds) list = list.filter((m) => filterIds.has(m.id));
   if (!scope.length) {
     area.innerHTML = folder
-      ? `<div class="empty"><div class="big">${ic('folder', 30)}</div><h3>Pasta vazia</h3><div>Grave com <b>Salvar em: ${esc(folder)}</b> selecionado, importe um áudio aqui ou arraste reuniões da lista para esta pasta na barra lateral.</div></div>`
+      ? `<div class="empty"><div class="big">${ic('folder', 30)}</div><h3>Pasta vazia</h3><div>As próximas reuniões deste assunto entram aqui sozinhas. Você também pode importar um áudio aqui ou arrastar reuniões para esta pasta na barra lateral.</div></div>`
       : folder === '' ? `<div class="empty"><div class="big">${ic('checkCircle', 30)}</div><h3>Tudo organizado</h3><div>Todas as reuniões estão em pastas.</div></div>`
         : `<div class="empty"><div class="big">${ic('waves', 30)}</div><h3>Nenhuma reunião gravada ainda</h3><div>Clique em <b>Gravar reunião</b> quando a próxima começar, ou importe um áudio existente.</div></div>`;
     return;
@@ -376,6 +378,7 @@ function renderList() {
         <div class="t">${esc(m.title)}</div>
         <div class="s">
           ${folder === undefined && m.folder ? `<span class="in-folder">${ic('folder', 12)} ${esc(m.folder)}</span>` : ''}
+          ${!m.folder && m.folderSuggestion?.name && m.status !== 'processing' ? `<span class="sug-folder" title="O app acha que esta reunião é desta pasta — abra para confirmar">${ic('folder', 12)} ${esc(m.folderSuggestion.name)}?</span>` : ''}
           ${openDoubts ? `<span class="has-doubts" title="Pontos de dúvida da IA esperando sua confirmação">${ic('help', 12)} ${openDoubts}</span>` : ''}
           <span>${ic('calendar', 12)} ${fmtDate(m.createdAt)}</span>
           ${m.duration ? `<span>${ic('clock', 12)} ${fmtDuration(m.duration)}</span>` : ''}
@@ -392,9 +395,14 @@ function renderList() {
     </div>`;
   };
   area.innerHTML = `<div class="list-head"><h3>${filterIds ? `Resultados para “${esc(query)}”` : folder ? 'Reuniões da pasta' : 'Suas reuniões'}</h3><span class="muted">${list.length}</span><div class="grow"></div>${pending.length ? `<button class="btn sm primary" id="procPending" title="Transcreve e resume, uma por vez, as gravações ainda não processadas">${ic('sparkles', 13)} Processar pendentes (${pending.length})</button>` : ''}<button class="btn ghost sm" id="openRoot">${ic('folder', 14)} Abrir no explorador</button></div>`
-    + (list.length ? [...groups].map(([g, ms]) => `<div class="group-label">${esc(g)}</div><div class="meetings">${ms.map(item).join('')}</div>`).join('')
+    + (list.length ? [...groups].map(([g, ms]) => `<div class="group ${closedGroups.has(g) ? 'closed' : ''}" data-g="${esc(g)}"><div class="group-label">${ic('chevronDown', 18)}<span>${esc(g)}</span><span class="count">${ms.length}</span></div><div class="meetings">${ms.map(item).join('')}</div></div>`).join('')
       : `<div class="empty"><h3>Nada encontrado</h3><div>Tente outra palavra.</div></div>`);
   $('#openRoot').onclick = () => (folder ? api.folders.open(folder) : api.lib.openFolder());
+  $$('.group-label', area).forEach((h) => (h.onclick = () => {
+    const g = h.parentElement.dataset.g;
+    if (closedGroups.has(g)) closedGroups.delete(g); else closedGroups.add(g);
+    h.parentElement.classList.toggle('closed');
+  }));
   if ($('#procPending')) $('#procPending').onclick = async () => {
     for (const m of pending) await api.pipe.process(m.id, 'audio');
     toast('success', `${pending.length} reunião(ões) na fila. Elas serão processadas uma de cada vez, em segundo plano.`);

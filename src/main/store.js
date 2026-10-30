@@ -42,8 +42,9 @@ function defaults() {
     codexPath: '',
     codexModel: '',
     codexEffort: '', // '' = padrão do Codex | low | medium | high
-    recordFolder: '', // pasta onde novas gravações e importações são salvas ('' = Sem pasta)
+    recordFolder: '', // pasta da próxima gravação/importação ('' = automático: o app identifica · ':none' = Sem pasta)
 
+    autoFolder: true,
     detectMeetings: true,
     autoStopSuggest: true,
 
@@ -70,6 +71,9 @@ class Store extends EventEmitter {
       // O Groq saiu do app: quem usava passa para a transcrição local
       if (raw.engine === 'groq') raw.engine = 'local';
       delete raw.groqKey;
+      // Até a 1.2 a pasta escolhida (ou só aberta) ficava valendo para todas as gravações seguintes
+      // e misturava reuniões de assuntos diferentes; agora o padrão é identificar a pasta sozinho
+      if (!raw.autoFolder) { raw.recordFolder = ''; raw.autoFolder = true; }
       this.data = { ...this.data, ...raw };
     } catch { /* primeira execução */ }
     this.save();

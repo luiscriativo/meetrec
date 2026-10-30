@@ -15,12 +15,12 @@ const SECTIONS = [
 ];
 
 
-export function topbar() { return `<h1>${ic('settings', 17)} Configurações</h1>`; }
+export function topbar() { return `<span class="crumb">MeetRec</span><span class="muted">/</span><h1>Configurações</h1>`; }
 
 export function render(el, route) {
   root = el;
   if (route.tab) sec = route.tab;
-  el.innerHTML = `<div class="view-inner"><div class="settings">
+  el.innerHTML = `<div class="view-inner"><div class="page-head"><div class="grow"><h2>Configurações</h2><div class="sub">Gravação, transcrição, resumo e integrações</div></div></div><div class="settings">
     <div class="settings-nav" id="snav"></div>
     <div id="sbody"></div>
   </div></div>`;

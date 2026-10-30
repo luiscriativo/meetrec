@@ -7,7 +7,7 @@ const LONG = ['install-engine', 'download-model', 'install-claude', 'login-claud
 const SETUP_ACT = /^(install|login)-(claude|codex)$/;
 
 export function topbar() {
-  return `<h1>${ic('activity', 17)} Diagnóstico</h1><div class="grow"></div><button class="btn no-drag" id="rerun">${ic('refresh', 14)} Verificar novamente</button>`;
+  return `<span class="crumb">MeetRec</span><span class="muted">/</span><h1>Diagnóstico</h1><div class="grow"></div><button class="btn no-drag" id="rerun">${ic('refresh', 14)} Verificar novamente</button>`;
 }
 
 export function render(el) {
@@ -48,7 +48,7 @@ function draw() {
   const errors = checks.filter((c) => c.state === 'error').length;
   const warns = checks.filter((c) => c.state === 'warn').length;
   const stIcon = { ok: 'check', warn: 'alert', error: 'x', info: 'info' };
-  root.innerHTML = `<div class="view-inner">
+  root.innerHTML = `<div class="view-inner"><div class="page-head"><div class="grow"><h2>Diagnóstico</h2><div class="sub">Tudo o que o MeetRec precisa para gravar, transcrever e resumir</div></div></div>
     <div class="card card-pad row" style="gap:16px;margin-bottom:6px">
       <span class="logo" style="width:46px;height:46px;border-radius:14px;background:${running ? 'var(--surface-3)' : errors ? 'var(--rec)' : warns ? 'var(--warn)' : 'var(--ok)'}">${ic(running ? 'loader' : errors ? 'alertCircle' : warns ? 'alert' : 'checkCircle', 22, running ? 'spin' : '')}</span>
       <div class="grow">

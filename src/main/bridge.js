@@ -131,6 +131,8 @@ class Bridge extends EventEmitter {
     if (inCall !== st.inCall) {
       st.inCall = inCall; changed = true;
       if (!inCall) st.speaking = [];
+      // Chamada nova: os participantes da anterior não valem (a aba do Teams fica aberta o dia todo)
+      else { st.participants = []; st.callStartedAt = now; }
       this.emit('call', { inCall, platform: st.platform, title: st.meetingTitle });
     }
     return changed;

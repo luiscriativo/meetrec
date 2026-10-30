@@ -9,14 +9,18 @@
   <link rel="stylesheet" href="folders.css">
 </head>
 <body>
-  <div class="app">
+  <div class="app" id="app">
     <aside class="sidebar">
-      <div class="brand"><span class="logo" id="logo"></span>MeetRec<button class="ver-btn" id="ver" title="Versão do app"></button></div>
+      <div class="brand"><span class="logo" id="logo"></span><span class="brand-name">MeetRec</span><button class="ver-btn" id="ver" title="Versão do app"></button></div>
       <button class="rec-cta" id="recCta"></button>
-      <nav class="nav" id="nav"></nav>
-      <div class="side-status" id="sideStatus"></div>
+      <div class="side-scroll">
+        <nav class="nav" id="nav"></nav>
+        <div class="side-status" id="sideStatus"></div>
+      </div>
+      <div class="side-card" id="sideCard"></div>
     </aside>
     <section class="main">
+      <button class="collapse-btn" id="collapseBtn" title="Recolher a barra lateral"></button>
       <header class="topbar" id="topbar"></header>
       <div id="updateBanner"></div>
       <div class="view" id="view"></div>

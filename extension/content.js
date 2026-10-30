@@ -156,6 +156,8 @@
   function tick() {
     const wasInCall = inCall;
     inCall = detectCall();
+    // Entrou numa chamada nova: esquece quem estava nas anteriores (a aba fica aberta o dia todo)
+    if (inCall && !wasInCall) { participants = new Set(); lastRoster = ''; }
     if (inCall) {
       try { scanCaptions(); } catch {}
       try { scanSpeaking(); } catch {}

@@ -89,16 +89,19 @@ Em **Configurações → Resumo (IA)**, escolha qual CLI escreve os resumos: o *
 </table>
 
 **📁 Pastas com memória: o Claude aprende o contexto de cada assunto**
-- Crie pastas (por cliente, projeto, time…) e escolha em **Salvar em** onde a gravação vai. Também dá para arrastar reuniões para uma pasta na barra lateral ou usar **Mover para pasta…**. As pastas são pastas de verdade no disco.
+- Crie pastas (por cliente, projeto, time…). As pastas são pastas de verdade no disco.
+- **O app descobre a pasta sozinho.** Antes do resumo, ele compara a reunião com cada pasta: título (reuniões recorrentes), pessoas em comum, termos do glossário e o nome da pasta dito na conversa. Quando o vencedor é claro, a reunião vai para a pasta (com o aviso "auto" e um botão **Não é desta pasta**). Quando não é, ela fica **sem pasta** e aparece a pergunta **Parece ser da pasta X?** — ao confirmar, o resumo é refeito com a memória da pasta.
+- Se preferir, escolha em **Pasta** (na tela inicial) onde a próxima gravação vai; depois volta para **Automático**. Também dá para arrastar reuniões para uma pasta na barra lateral ou usar **Mover para pasta…**.
 - Cada pasta guarda três coisas que o Claude lê antes de cada resumo:
   - **Contexto**: do que se trata, quem participa e com qual papel, e os objetivos. Você não escreve do zero: depois da primeira reunião o Claude monta um rascunho, e você só **aprova** ou ajusta. Também dá para montar o contexto a partir de reuniões antigas.
   - **Glossário**: termos, nomes e siglas que você confirmou.
   - **Histórico**: decisões e pendências em aberto. O Claude atualiza sozinho a cada reunião.
-- A memória não incha com o tempo:
+- A memória se mantém pequena sozinha, sem pedir nada a você:
   - do glossário, só vão para o Claude os termos que aparecem na reunião, mais os mais usados;
-  - o histórico tem limite de 3 mil caracteres, garantido pelo app;
-  - pendências sem menção nas últimas reuniões são marcadas como **antigas** e ganham os botões **Encerrar** e **Ainda vale**.
-- A tela da pasta mostra o tamanho da memória. Quando ela cresce, o botão **Enxugar com o Claude** propõe uma versão curta, mostrando o que sai. Nada muda até você aprovar.
+  - o histórico mira 1,5 mil caracteres (no máximo 3 mil, garantido pelo app) e o contexto guarda só as pessoas recorrentes;
+  - pendências resolvidas, substituídas ou sem menção nas últimas 3 reuniões saem do histórico e vão para o **arquivo da pasta** — não vão para os resumos, mas não se perdem (dá para **Restaurar**);
+  - quando a memória passa do ponto, o app a enxuga sozinho logo depois do resumo e avisa. **Desfazer limpeza** volta à versão anterior.
+- O resumo lista em **Participantes** só quem esteve na reunião — as pessoas do contexto da pasta servem para grafar nomes e entender papéis, não entram na lista.
 
 **❓ Pontos de dúvida: corrija o que a IA não entendeu**
 - No fim de cada resumo, o Claude lista o que não conseguiu entender com certeza: termos mal reconhecidos, nomes, números ambíguos e quem disse o quê.
@@ -120,14 +123,15 @@ Em **Configurações → Resumo (IA)**, escolha qual CLI escreve os resumos: o *
 - Opcional: clique com o botão direito em `MeetRec - Reuniões` no Drive → **Acesso off-line → Disponível off-line**. Assim só essa pasta fica no disco, para ouvir sem espera e sem internet.
 
 **🧰 E mais**
-- **Biblioteca** de reuniões agrupada por dia, com busca em títulos, transcrições e resumos.
+- **Visual minimalista**: barra lateral com seções que recolhem (ou só ícones), painel principal limpo e tema **Escuro / Claro / Sistema** a um clique na própria barra.
+- **Biblioteca** de reuniões agrupada por período, com busca em títulos, transcrições e resumos.
 - **Importe** áudios e vídeos existentes (mp3, m4a, wav, mp4, mkv…) para transcrever e resumir.
 - **Exporte** o resumo (`.md`), a transcrição (`.txt`) e o áudio (MP3).
 - Modo **"só gravar"**: grave o dia todo e use **Processar pendentes** quando o PC estiver livre.
 - O processamento **nunca compete com uma gravação**: a fila espera, e o Whisper roda com prioridade baixa.
 - **Diagnóstico** que verifica tudo e instala o que falta com um clique.
 - **Atualização automática**: quando sai uma versão nova, o app avisa. No Windows ele baixa e instala sozinho (veja [Atualizações](#-atualizações)).
-- Tema claro e escuro, notificações do sistema e sons discretos.
+- Notificações do sistema e sons discretos.
 
 ---
 
@@ -333,10 +337,11 @@ npm start
 |---|---|
 | `npm start` | Abre o app em modo de desenvolvimento |
 | `npm run check` | Valida a sintaxe de todo o JS (CommonJS e módulos ES), JSON e Python |
-| `npm test` | Testes da lógica de pastas, glossário, correções, bloco de dúvidas, motor de transcrição e instalação do Claude (`node --test`) |
+| `npm test` | Testes da lógica de pastas (inclusive a escolha automática da pasta e a limpeza da memória), glossário, correções, bloco de dúvidas, motor de transcrição e instalação do Claude (`node --test`) |
 | `node scripts/smoke-engine.js` | Instala o motor do zero numa pasta temporária, baixa um modelo e transcreve de verdade (roda no CI de cada sistema) |
 | `npm run dist:win` / `dist:mac` / `dist:linux` | Gera o instalador localmente em `dist/` |
 | `npm run icons` | Regera os ícones do app, da bandeja e da extensão |
+| `node scripts/social-preview.js …` | Regera `docs/social-preview.png`, a imagem que aparece quando o link do repositório é colado (veja o cabeçalho do script) |
 
 **Dados de demonstração** (usados nos prints deste README):
 

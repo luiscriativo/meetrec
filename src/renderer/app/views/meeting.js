@@ -45,6 +45,7 @@ export async function render(el, route) {
   if (!data) { el.innerHTML = `<div class="view-inner"><div class="empty"><h3>Reunião não encontrada</h3><button class="btn" id="bk">Voltar</button></div></div>`; $('#bk').onclick = () => ctx.navigate('home'); return; }
   el.innerHTML = `<div class="view-inner">
     <div class="m-head" id="mHead"></div>
+    <div id="mFolder"></div>
     <div id="mStatus"></div>
     <div id="mSync"></div>
     <div id="mWarn"></div>
@@ -52,8 +53,9 @@ export async function render(el, route) {
     <div class="tabs" id="tabs"></div>
     <div id="tabBody"></div>
   </div>`;
-  renderHead(); renderStatus(); renderSync(); renderWarn(); renderPlayer(); renderTabs(); renderBody();
+  renderHead(); renderFolderHint(); renderStatus(); renderSync(); renderWarn(); renderPlayer(); renderTabs(); renderBody();
   sig = signature();
+  if (route.pickFolder) askMove();
   api.sync.presence(id);
   el.addEventListener('scroll', onScroll, { passive: true });
 }
@@ -90,7 +92,7 @@ function renderHead() {
     <div class="grow">
       <input class="m-title" id="mTitle" value="${esc(m.title)}" title="Clique para renomear">
       <div class="m-meta">
-        <button class="folder-chip ${m.folder ? '' : 'none'}" id="folderChip" title="${m.folder ? 'O resumo usa o contexto, o glossário e o histórico desta pasta. Clique para mover.' : 'Coloque numa pasta para a IA usar o contexto das reuniões do mesmo assunto'}">${ic('folder', 13)} ${m.folder ? esc(m.folder) : 'Sem pasta — mover…'}</button>
+        <button class="folder-chip ${m.folder ? '' : 'none'}" id="folderChip" title="${m.folder ? 'O resumo usa o contexto, o glossário e o histórico desta pasta. Clique para mover.' : 'Coloque numa pasta para a IA usar o contexto das reuniões do mesmo assunto'}">${ic('folder', 13)} ${m.folder ? esc(m.folder) : 'Sem pasta — mover…'}${m.folder && m.folderPick === 'auto' ? `<span class="auto-tag" title="${esc(`Colocada automaticamente: ${(m.folderAuto?.reasons || []).join(', ')}`)}">auto</span>` : ''}</button>
         <span>${ic('calendar', 14)} ${fmtDate(m.createdAt)}</span>
         ${m.duration ? `<span>${ic('clock', 14)} ${fmtDuration(m.duration)}</span>` : ''}
         ${m.platform ? `<span>${ic('globe', 14)} ${esc(m.platform)}</span>` : ''}
@@ -241,6 +243,31 @@ function renderStatus() {
     el.innerHTML = `<div class="banner warn" style="margin-bottom:14px;align-items:center">${ic('mic', 17)}<div class="grow">Esta reunião está sendo gravada agora.</div><button class="btn sm" id="goLive">Ver gravação</button></div>`;
     $('#goLive').onclick = () => ctx.navigate('home');
   } else el.innerHTML = '';
+}
+
+// ───────── Pasta sugerida (o app ou a IA reconheceu o assunto) ─────────
+function renderFolderHint() {
+  const el = $('#mFolder');
+  if (!el) return;
+  const m = data.meta;
+  const s = m.folderSuggestion;
+  if (m.folder || !s?.name || m.status === 'processing' || !state.folders.some((f) => f.name === s.name)) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="hint-card">
+    <span class="hint-ico">${ic('folder', 16)}</span>
+    <div class="grow"><b>Parece ser da pasta “${esc(s.name)}”</b><div class="muted">${esc((s.reasons || []).join(' · ') || 'assunto parecido')}. Ao confirmar, o resumo é refeito com a memória da pasta.</div></div>
+    <button class="btn sm ghost" id="fhNo">Não é</button>
+    <button class="btn sm" id="fhOther">Outra pasta…</button>
+    <button class="btn sm primary" id="fhYes">${ic('check', 13)} É desta pasta</button>
+  </div>`;
+  $('#fhYes').onclick = async () => {
+    releaseAudio();
+    const r = await api.lib.acceptFolder(id, s.name);
+    if (!r.ok) toast('error', r.error);
+    await ctx.reloadFolders();
+    reload();
+  };
+  $('#fhOther').onclick = askMove;
+  $('#fhNo').onclick = async () => { await api.lib.dismissFolder(id); toast('info', 'Ok — a reunião fica sem pasta.'); reload(); };
 }
 
 function renderWarn() {
@@ -684,7 +711,7 @@ const reload = debounce(async () => {
   const s = signature();
   const changed = s !== sig;
   sig = s;
-  renderStatus(); renderSync(); renderWarn();
+  renderFolderHint(); renderStatus(); renderSync(); renderWarn();
   if (document.activeElement?.id !== 'mTitle') renderHead();
   if (changed) {
     renderTabs();
