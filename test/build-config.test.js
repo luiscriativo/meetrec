@@ -11,9 +11,9 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 test('AppUserModelID do app é igual ao appId do electron-builder', () => {
   const appId = read('electron-builder.yml').match(/^appId:\s*(\S+)/m)?.[1];
   const main = read('src/main/main.js');
-  const m = main.match(/setAppUserModelId\(app\.isPackaged \? '([^']+)'/);
+  const m = main.match(/windowsIdentity\(\{ appUserModelId: '([^']+)'/);
   assert.ok(appId, 'appId não encontrado no electron-builder.yml');
-  assert.ok(m, 'setAppUserModelId(app.isPackaged ? ...) não encontrado no main.js');
+  assert.ok(m, 'windowsIdentity({ appUserModelId: ... }) não encontrado no main.js');
   assert.equal(m[1], appId);
 });
 

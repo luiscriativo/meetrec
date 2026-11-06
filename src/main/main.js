@@ -24,6 +24,7 @@ const F = require('./folders');
 const S = require('./sync');
 const { migrateLibrary, countMeetings } = require('./migrate');
 const { FOLDER_NAME: EXT_FOLDER, syncExtension } = require('./extension');
+const { windowsIdentity, ensureStartMenuShortcut } = require('./win-shortcut');
 
 let extInfo = { dir: null, version: null };
 function syncExtensionCopy() {
@@ -42,7 +43,8 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Identidade do app no Windows: precisa ser igual ao appId do electron-builder (é o que o instalador grava
 // nos atalhos). Assim a barra de tarefas e as notificações usam o ícone e o nome do MeetRec. A versão de
 // desenvolvimento (electron.exe) usa outra identidade para não misturar o ícone do Electron com o do app.
-if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'io.github.luiscriativo.meetrec' : 'io.github.luiscriativo.meetrec.dev');
+// O atalho do Menu Iniciar que o Electron cria para as notificações é gravado antes, com ícone (win-shortcut.js).
+windowsIdentity({ appUserModelId: 'io.github.luiscriativo.meetrec', toastActivatorClsid: '{50261471-4197-4F23-8BBF-A6646348EB2A}' });
 
 // Desenvolvimento: perfil separado (ex.: dados de demonstração para os prints do README)
 const devProfile = !app.isPackaged && process.argv.find((a) => a.startsWith('--user-data='));
@@ -112,8 +114,11 @@ function notify(title, body, onClick) {
   n.on('click', () => { release(); onClick ? onClick() : showMain(); });
   n.on('close', release);
   n.show();
+  // O Electron grava o atalho do Menu Iniciar (sem ícone) na primeira notificação: confere depois
+  if (!shortcutChecked) { shortcutChecked = true; setTimeout(() => ensureStartMenuShortcut(), 5000); }
 }
 const liveNotifications = new Set();
+let shortcutChecked = false;
 
 function toast(kind, message, opts = {}) { send('toast', { kind, message, ...opts }); }
 
@@ -1134,6 +1139,7 @@ app.on('will-quit', () => {
 
 app.whenReady().then(async () => {
   store = new Store();
+  ensureStartMenuShortcut(); // Windows instalado: atalho do Menu Iniciar com ícone, antes de o Electron criar o dele
   setupLocalEngine();
   extInfo = syncExtensionCopy();
   library = new Library(store, { workRoot: path.join(app.getPath('userData'), 'trabalho') });

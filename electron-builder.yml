@@ -16,6 +16,7 @@ asar: true
 files:
   - src/**/*
   - assets/**/*
+  - "!assets/installer.nsh"
   - python/**/*
   - extension/**/*
   - package.json
